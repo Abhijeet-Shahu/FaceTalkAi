@@ -3,12 +3,14 @@
 Test your trained models before running main app
 """
 
+import json  # MISSING IMPORT
 import face_recognition
 import pickle
 import cv2
 import numpy as np
 import os
 from datetime import datetime
+import random  # For random.choice
 
 class ModelTester:
     def __init__(self):
@@ -129,7 +131,7 @@ class ModelTester:
         # Load intents
         if os.path.exists("my_intents.json"):
             with open("my_intents.json", 'r') as f:
-                intents = json.load(f)
+                intents = json.load(f)  # Now json is defined
             print(f"✅ Loaded {len(intents['intents'])} intents")
         else:
             print("⚠️ No intents file found")
@@ -158,8 +160,7 @@ class ModelTester:
         for intent in intents['intents']:
             for pattern in intent['patterns']:
                 if pattern.lower() in query:
-                    import random
-                    return random.choice(intent['responses'])
+                    return random.choice(intent['responses'])  # random is imported now
         
         return "I'm still learning! Can you rephrase that?"
 

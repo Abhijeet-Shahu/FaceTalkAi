@@ -32,7 +32,7 @@ class CustomIntents:
                         "tag": "about_me",
                         "patterns": ["who are you", "your name", "introduce yourself"],
                         "responses": [
-                            "I'm FaceTalk AI, created for a final year project at BVIT!",
+                            "I'm FaceTalk AI, created by FaceTalk Team!",
                             "I'm your intelligent assistant with face recognition!"
                         ]
                     }
@@ -96,7 +96,7 @@ class CustomIntents:
             {
                 "tag": "about_abhijeet",
                 "patterns": [
-                    "tell me about abhijeet",
+                    "tell me about abhijeet",   
                     "who is abhijeet",
                     "abhijeet's role"
                 ],

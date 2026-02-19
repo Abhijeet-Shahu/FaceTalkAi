@@ -1,0 +1,3 @@
+activate facenv
+
+cd Desktop\FinalYearProject\FaceTalkAi\local_app

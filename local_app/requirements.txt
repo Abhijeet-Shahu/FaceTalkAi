@@ -1,4 +1,10 @@
-# requirements.txt
+openai>=1.0.0
+python-dotenv~=1.0
+faster-whisper
+sounddevice
+numpy
+
+# FaceTalk AI - Complete Requirements
 # Core dependencies
 opencv-python==4.8.1.78
 numpy==1.24.3
@@ -10,7 +16,6 @@ dlib==19.24.2
 
 # Database
 supabase==1.2.0
-sqlite3  # Built-in
 
 # AI and Chatbot
 groq==0.4.2
@@ -27,14 +32,8 @@ python-dotenv==1.0.0
 requests==2.31.0
 urllib3==2.0.7
 
-# UI
-tkinter  # Built-in
-
 # Utilities
-pickle  # Built-in
-json  # Built-in
-threading  # Built-in
-datetime  # Built-in
-os  # Built-in
-sys  # Built-in
-time  # Built-in
+pickle5  # For better pickle compatibility
+cmake  # Required for dlib
+
+pyautogui

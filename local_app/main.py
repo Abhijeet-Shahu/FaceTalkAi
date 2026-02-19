@@ -1,4 +1,11 @@
 # main.py
+from asyncio import subprocess
+import os
+import webbrowser
+
+import pyautogui
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+from pydoc import text
 import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
@@ -13,6 +20,11 @@ from dotenv import load_dotenv
 from datetime import datetime
 import queue
 
+from voice_module import VoiceAssistant  # Import the voice assistant module
+
+from tool_manager import ToolManager  # Import the tool manager
+
+
 load_dotenv()  # Load environment variables from .env file
 
 class FaceTalkAI:
@@ -21,6 +33,7 @@ class FaceTalkAI:
         self.root.title("FaceTalk AI - Intelligent Face Recognition System")
         self.root.geometry("1280x720")
         self.root.configure(bg='#1a1a2e')
+        
         
         # Initialize Supabase
         
@@ -32,6 +45,17 @@ class FaceTalkAI:
         # Initialize modules
         self.face_recognizer = FaceRecognizer(self.db)
         self.chatbot = GroqChatbot(api_key=os.getenv('GROQ_API_KEY'))
+
+        from intent_engine import IntentEngine
+
+        self.intent_engine = IntentEngine(os.getenv('GROQ_API_KEY'))
+
+        # Initialize voice assistant with callback
+        self.voice = VoiceAssistant(
+            on_speech_callback=self.handle_voice_input
+        ) 
+
+        self.tool_manager = ToolManager()  # Get tools from the tool manager
         
         # Video capture
         self.cap = None
@@ -171,30 +195,56 @@ class FaceTalkAI:
         self.clear_btn.pack(pady=5)
     
     def setup_voice_tab(self):
-        """Voice assistant tab (placeholder for your friend)"""
-        
+        """Voice assistant tab"""
+
         voice_frame = ttk.Frame(self.voice_tab)
         voice_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        # Placeholder content
-        ttk.Label(voice_frame, text="🎤 Voice Assistant Module", 
-                 font=('Arial', 16, 'bold')).pack(pady=20)
-        
-        ttk.Label(voice_frame, 
-                 text="This module is being developed by Rohit\n\n"
-                      "Features coming soon:\n"
-                      "• Voice command recognition\n"
-                      "• Text-to-speech responses\n"
-                      "• System control via voice\n"
-                      "• Natural language interaction",
-                 font=('Arial', 12), justify=tk.CENTER).pack(pady=20)
-        
-        # Placeholder buttons
-        ttk.Button(voice_frame, text="🎤 Start Voice Assistant", 
-                  state=tk.DISABLED).pack(pady=10)
-        ttk.Button(voice_frame, text="⚙ Settings", 
-                  state=tk.DISABLED).pack(pady=5)
+
+        ttk.Label(
+            voice_frame,
+            text="🎤 Voice Assistant",
+            font=('Arial', 16, 'bold')
+        ).pack(pady=20)
+
+        self.voice_status_label = ttk.Label(
+            voice_frame,
+            text="Status: Stopped",
+            font=('Arial', 12)
+        )
+        self.voice_status_label.pack(pady=10)
+
+        ttk.Button(
+            voice_frame,
+            text="▶ Start Voice Assistant",
+            command=self.start_voice
+        ).pack(pady=10)
+
+        ttk.Button(
+            voice_frame,
+            text="⏹ Stop Voice Assistant",
+            command=self.stop_voice
+        ).pack(pady=5)
+
     
+    def handle_voice_input(self, text):
+        """
+        Called when voice assistant detects speech.
+        This sends voice text into chatbot pipeline.
+
+        """
+        # show msg to the client
+        self.root.after(
+            0,lambda: self.chat_history.insert(
+                tk.END, f"You (Voice): {text}\n", 'user'
+            )
+        )
+
+        threading.Thread(
+            target=self.get_chat_response,
+            args=(text,),
+            daemon=True
+        ).start()
+
     def setup_dashboard_tab(self):
         """Dashboard with statistics"""
         
@@ -379,6 +429,19 @@ class FaceTalkAI:
     def get_chat_response(self, message):
         """Get chatbot response"""
         try:
+            intent = self.intent_engine.classify(message)
+            print(f"Intent classified: {intent}")
+
+            if intent.get("type") == "tool":
+                tool_name = intent.get("tool")
+                args = intent.get("args", {})
+
+                result = self.tool_manager.execute(tool_name, args)
+
+                self.root.after(0, self.display_chat_response, result)
+                self.root.after(0, lambda: self.voice.speak(result))
+                return
+            
             # Add user context if recognized
             context = None
             if self.current_user:
@@ -388,20 +451,24 @@ class FaceTalkAI:
             
             # Display response
             self.root.after(0, self.display_chat_response, response)
-            
+            self.root.after(0, lambda: self.voice.speak(response))
+
             # Save to database if user is recognized
             if self.current_user:
                 self.db.save_chat_message(self.current_user['id'], message, response)
-                
+       
         except Exception as e:
             self.root.after(0, self.display_chat_response, f"Error: {str(e)}")
+
+    
     
     def display_chat_response(self, response):
         """Display chatbot response"""
         self.chat_history.insert(tk.END, f"AI: {response}\n\n", 'ai')
         self.chat_history.tag_config('ai', foreground='#2196F3')
         self.chat_history.see(tk.END)
-    
+
+
     def clear_chat(self):
         """Clear chat history"""
         self.chat_history.delete(1.0, tk.END)
@@ -455,6 +522,18 @@ class FaceTalkAI:
             self.camera.release()
 
         self.root.destroy()
+
+    def start_voice(self):
+        self.voice.start()
+        self.voice_status_label.config(text="Status: Listening...")
+        self.status_label.config(text="Voice Assistant Active")
+
+
+    def stop_voice(self):
+        self.voice.stop()
+        self.voice_status_label.config(text="Status: Stopped")
+        self.status_label.config(text="Voice Assistant Stopped")
+
 
 if __name__ == "__main__":
     root = tk.Tk()

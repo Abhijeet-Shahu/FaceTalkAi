@@ -1,0 +1,366 @@
+{
+  "intents": [
+    {
+      "tag": "greeting",
+      "patterns": [
+        "hello",
+        "hi",
+        "hey",
+        "good morning"
+      ],
+      "responses": [
+        "Hello! I'm FaceTalk AI, your personal assistant!",
+        "Hi there! Great to see you!"
+      ]
+    },
+    {
+      "tag": "about_me",
+      "patterns": [
+        "who are you",
+        "your name",
+        "introduce yourself"
+      ],
+      "responses": [
+        "I'm FaceTalk AI, created for a final year project at BVIT!",
+        "I'm your intelligent assistant with face recognition!"
+      ]
+    },
+    {
+      "tag": "team_members",
+      "patterns": [
+        "who are team members",
+        "who is in your team",
+        "your developers",
+        "who created you"
+      ],
+      "responses": [
+        "Our team consists of Abhijeet Shahu, Rohit Shinde, and Akshay Patel!",
+        "Abhijeet, Rohit, and Akshay are the three developers behind FaceTalk AI."
+      ]
+    },
+    {
+      "tag": "about_abhijeet",
+      "patterns": [
+        "tell me about abhijeet",
+        "who is abhijeet",
+        "abhijeet's role"
+      ],
+      "responses": [
+        "Abhijeet Shahu is the lead developer working on face recognition and integration!",
+        "Abhijeet handles the face recognition module and overall system architecture."
+      ]
+    },
+    {
+      "tag": "about_rohit",
+      "patterns": [
+        "tell me about rohit",
+        "who is rohit",
+        "rohit's role"
+      ],
+      "responses": [
+        "Rohit Shinde is working on the voice assistant module!",
+        "Rohit is responsible for voice recognition and text-to-speech features."
+      ]
+    },
+    {
+      "tag": "about_akshay",
+      "patterns": [
+        "tell me about akshay",
+        "who is akshay",
+        "akshay's role"
+      ],
+      "responses": [
+        "Akshay Patel is working on the UI/UX and database integration!",
+        "Akshay handles the user interface and database connections."
+      ]
+    },
+    {
+      "tag": "college_name",
+      "patterns": [
+        "your college name",
+        "which college",
+        "college details",
+        "where are you from"
+      ],
+      "responses": [
+        "We're from Bharati Vidyapeeth's Institute of Technology, Navi Mumbai!",
+        "BVIT, Navi Mumbai - that's our home institution!"
+      ]
+    },
+    {
+      "tag": "guide",
+      "patterns": [
+        "who is your guide",
+        "your mentor",
+        "project guide",
+        "mhatre sir"
+      ],
+      "responses": [
+        "Our project guide is Mr. Mithun Mhatre. He's been helping us throughout this project!",
+        "Mr. Mithun Mhatre is guiding our team with his valuable expertise."
+      ]
+    },
+    {
+      "tag": "department",
+      "patterns": [
+        "which department",
+        "computer technology",
+        "your branch"
+      ],
+      "responses": [
+        "We're from the Department of Computer Technology!",
+        "Computer Technology department at BVIT."
+      ]
+    },
+    {
+      "tag": "what_is_facetalk",
+      "patterns": [
+        "what is facetalk",
+        "about facetalk",
+        "tell me about facetalk",
+        "project details"
+      ],
+      "responses": [
+        "FaceTalk AI is an intelligent face recognition system combined with AI chatbot! It can recognize faces through camera and have natural conversations.",
+        "This project combines computer vision for face recognition with AI-powered conversation to create a personalized assistant."
+      ]
+    },
+    {
+      "tag": "how_it_works",
+      "patterns": [
+        "how does it work",
+        "how facetalk works",
+        "working principle"
+      ],
+      "responses": [
+        "FaceTalk uses advanced algorithms to detect faces, create unique faceprints, and match them with our database. The AI chatbot uses Groq API for natural conversations!",
+        "We use OpenCV and face_recognition library for face detection, and Groq's LLM for intelligent conversations."
+      ]
+    },
+    {
+      "tag": "technologies",
+      "patterns": [
+        "which technologies",
+        "tech stack",
+        "what technologies used",
+        "programming languages"
+      ],
+      "responses": [
+        "We use Python with OpenCV for face recognition, Groq API for AI conversations, Supabase for cloud database, and Tkinter for the user interface!",
+        "Tech stack: Python, OpenCV, face_recognition, Groq, Supabase, and Tkinter."
+      ]
+    },
+    {
+      "tag": "team_members",
+      "patterns": [
+        "who are team members",
+        "who is in your team",
+        "your developers",
+        "who created you"
+      ],
+      "responses": [
+        "Our team consists of Abhijeet Shahu, Rohit Shinde, and Akshay Patel!",
+        "Abhijeet, Rohit, and Akshay are the three developers behind FaceTalk AI."
+      ]
+    },
+    {
+      "tag": "about_abhijeet",
+      "patterns": [
+        "tell me about abhijeet",
+        "who is abhijeet",
+        "abhijeet's role"
+      ],
+      "responses": [
+        "Abhijeet Shahu is the lead developer working on face recognition and integration!",
+        "Abhijeet handles the face recognition module and overall system architecture."
+      ]
+    },
+    {
+      "tag": "about_rohit",
+      "patterns": [
+        "tell me about rohit",
+        "who is rohit",
+        "rohit's role"
+      ],
+      "responses": [
+        "Rohit Shinde is working on the voice assistant module!",
+        "Rohit is responsible for voice recognition and text-to-speech features."
+      ]
+    },
+    {
+      "tag": "about_akshay",
+      "patterns": [
+        "tell me about akshay",
+        "who is akshay",
+        "akshay's role"
+      ],
+      "responses": [
+        "Akshay Patel is working on the UI/UX and database integration!",
+        "Akshay handles the user interface and database connections."
+      ]
+    },
+    {
+      "tag": "college_name",
+      "patterns": [
+        "your college name",
+        "which college",
+        "college details",
+        "where are you from"
+      ],
+      "responses": [
+        "We're from Bharati Vidyapeeth's Institute of Technology, Navi Mumbai!",
+        "BVIT, Navi Mumbai - that's our home institution!"
+      ]
+    },
+    {
+      "tag": "guide",
+      "patterns": [
+        "who is your guide",
+        "your mentor",
+        "project guide",
+        "mhatre sir"
+      ],
+      "responses": [
+        "Our project guide is Mr. Mithun Mhatre. He's been helping us throughout this project!",
+        "Mr. Mithun Mhatre is guiding our team with his valuable expertise."
+      ]
+    },
+    {
+      "tag": "department",
+      "patterns": [
+        "which department",
+        "computer technology",
+        "your branch"
+      ],
+      "responses": [
+        "We're from the Department of Computer Technology!",
+        "Computer Technology department at BVIT."
+      ]
+    },
+    {
+      "tag": "what_is_facetalk",
+      "patterns": [
+        "what is facetalk",
+        "about facetalk",
+        "tell me about facetalk",
+        "project details"
+      ],
+      "responses": [
+        "FaceTalk AI is an intelligent face recognition system combined with AI chatbot! It can recognize faces through camera and have natural conversations.",
+        "This project combines computer vision for face recognition with AI-powered conversation to create a personalized assistant."
+      ]
+    },
+    {
+      "tag": "how_it_works",
+      "patterns": [
+        "how does it work",
+        "how facetalk works",
+        "working principle"
+      ],
+      "responses": [
+        "FaceTalk uses advanced algorithms to detect faces, create unique faceprints, and match them with our database. The AI chatbot uses Groq API for natural conversations!",
+        "We use OpenCV and face_recognition library for face detection, and Groq's LLM for intelligent conversations."
+      ]
+    },
+    {
+      "tag": "technologies",
+      "patterns": [
+        "which technologies",
+        "tech stack",
+        "what technologies used",
+        "programming languages"
+      ],
+      "responses": [
+        "We use Python with OpenCV for face recognition, Groq API for AI conversations, Supabase for cloud database, and Tkinter for the user interface!",
+        "Tech stack: Python, OpenCV, face_recognition, Groq, Supabase, and Tkinter."
+      ]
+    },
+    {
+      "tag": "what_is_facetalk",
+      "patterns": [
+        "what is facetalk",
+        "about facetalk",
+        "tell me about facetalk",
+        "project details"
+      ],
+      "responses": [
+        "FaceTalk AI is an intelligent face recognition system combined with AI chatbot! It can recognize faces through camera and have natural conversations.",
+        "This project combines computer vision for face recognition with AI-powered conversation to create a personalized assistant."
+      ]
+    },
+    {
+      "tag": "how_it_works",
+      "patterns": [
+        "how does it work",
+        "how facetalk works",
+        "working principle"
+      ],
+      "responses": [
+        "FaceTalk uses advanced algorithms to detect faces, create unique faceprints, and match them with our database. The AI chatbot uses Groq API for natural conversations!",
+        "We use OpenCV and face_recognition library for face detection, and Groq's LLM for intelligent conversations."
+      ]
+    },
+    {
+      "tag": "technologies",
+      "patterns": [
+        "which technologies",
+        "tech stack",
+        "what technologies used",
+        "programming languages"
+      ],
+      "responses": [
+        "We use Python with OpenCV for face recognition, Groq API for AI conversations, Supabase for cloud database, and Tkinter for the user interface!",
+        "Tech stack: Python, OpenCV, face_recognition, Groq, Supabase, and Tkinter."
+      ]
+    },
+    {
+      "tag": "team_members",
+      "patterns": [
+        "who are team members",
+        "who is in your team",
+        "your developers",
+        "who created you"
+      ],
+      "responses": [
+        "Our team consists of Abhijeet Shahu, Rohit Shinde, and Akshay Patel!",
+        "Abhijeet, Rohit, and Akshay are the three developers behind FaceTalk AI."
+      ]
+    },
+    {
+      "tag": "about_abhijeet",
+      "patterns": [
+        "tell me about abhijeet",
+        "who is abhijeet",
+        "abhijeet's role"
+      ],
+      "responses": [
+        "Abhijeet Shahu is the lead developer working on face recognition and integration!",
+        "Abhijeet handles the face recognition module and overall system architecture."
+      ]
+    },
+    {
+      "tag": "about_rohit",
+      "patterns": [
+        "tell me about rohit",
+        "who is rohit",
+        "rohit's role"
+      ],
+      "responses": [
+        "Rohit Shinde is working on the voice assistant module!",
+        "Rohit is responsible for voice recognition and text-to-speech features."
+      ]
+    },
+    {
+      "tag": "about_akshay",
+      "patterns": [
+        "tell me about akshay",
+        "who is akshay",
+        "akshay's role"
+      ],
+      "responses": [
+        "Akshay Patel is working on the UI/UX and database integration!",
+        "Akshay handles the user interface and database connections."
+      ]
+    }
+  ]
+}
