@@ -4,6 +4,7 @@ import os
 import webbrowser
 
 import pyautogui
+import requests
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from pydoc import text
 import tkinter as tk
@@ -44,11 +45,8 @@ class FaceTalkAI:
         
         # Initialize modules
         self.face_recognizer = FaceRecognizer(self.db)
-        self.chatbot = GroqChatbot(api_key=os.getenv('GROQ_API_KEY'))
 
         from intent_engine import IntentEngine
-
-        self.intent_engine = IntentEngine(os.getenv('GROQ_API_KEY'))
 
         # Initialize voice assistant with callback
         self.voice = VoiceAssistant(
@@ -232,6 +230,10 @@ class FaceTalkAI:
         This sends voice text into chatbot pipeline.
 
         """
+
+        if "Jarvis" not in text:
+            return  # Ignore if not addressed to the assistant
+        
         # show msg to the client
         self.root.after(
             0,lambda: self.chat_history.insert(
@@ -426,32 +428,37 @@ class FaceTalkAI:
         # Get response in separate thread
         threading.Thread(target=self.get_chat_response, args=(message,), daemon=True).start()
     
+    import requests
     def get_chat_response(self, message):
         """Get chatbot response"""
         try:
-            intent = self.intent_engine.classify(message)
-            print(f"Intent classified: {intent}")
+            response = requests.post(
+                "http://127.0.0.1:8000/process",
+                json={
+                    "text": message
+                }            
+            )
 
-            if intent.get("type") == "tool":
-                tool_name = intent.get("tool")
-                args = intent.get("args", {})
+            data = response.json()
+            print("Intent Engine Response:", data)
 
+            if data.get("type") == "tool":
+                tool_name = data.get("tool")   
+                args = data.get("args", {}) 
+                
                 result = self.tool_manager.execute(tool_name, args)
 
                 self.root.after(0, self.display_chat_response, result)
                 self.root.after(0, lambda: self.voice.speak(result))
                 return
             
-            # Add user context if recognized
-            context = None
-            if self.current_user:
-                context = f"User: {self.current_user['name']}"
+            elif data.get("type") == "chat":
+                result = data.get("response","Not response")
+
+                self.root.after(0, self.display_chat_response, result)
+                self.root.after(0, lambda: self.voice.speak(result))
+                return
             
-            response = self.chatbot.get_response(message, context)
-            
-            # Display response
-            self.root.after(0, self.display_chat_response, response)
-            self.root.after(0, lambda: self.voice.speak(response))
 
             # Save to database if user is recognized
             if self.current_user:
@@ -464,7 +471,7 @@ class FaceTalkAI:
     
     def display_chat_response(self, response):
         """Display chatbot response"""
-        self.chat_history.insert(tk.END, f"AI: {response}\n\n", 'ai')
+        self.chat_history.insert(tk.END, f"Jarvis: {response}\n\n", 'ai')
         self.chat_history.tag_config('ai', foreground='#2196F3')
         self.chat_history.see(tk.END)
 

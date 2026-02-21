@@ -4,9 +4,13 @@ import numpy as np
 import queue
 import time
 from audio_capture import AudioCapture
-from transcriber import RealtimeTranscriber
 from tts_service import TTSService
-import librosa
+
+from groq import Groq
+import tempfile
+import soundfile as sf
+import os
+
 
 class VoiceAssistant:
     def __init__(self, on_speech_callback=None):
@@ -19,11 +23,7 @@ class VoiceAssistant:
 
         # Audio + STT
         self.audio_cap = AudioCapture()
-        self.transcriber = RealtimeTranscriber(
-            model_size="base.en",
-            device="cpu",
-            compute_type="int8"
-        )
+        self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         # TTS (for speaking responses)
         self.tts = TTSService()
@@ -73,8 +73,8 @@ class VoiceAssistant:
         CAPTURE_RATE = self.audio_cap.sample_rate
         TARGET_RATE = 16000
 
-        SILENCE_THRESHOLD = 0.005  # Slightly higher threshold
-        SILENCE_DURATION_MS = 700  # 0.7 seconds of silence = end of speech
+        SILENCE_THRESHOLD = 0.02  # Slightly higher threshold
+        SILENCE_DURATION_MS = 1000  # 1 seconds of silence = end of speech
         consecutive_silence_samples = 0
         speech_detected = False
 
@@ -127,27 +127,40 @@ class VoiceAssistant:
                     consecutive_silence_samples = 0
 
     def _process_audio_buffer(self, audio_buffer, CAPTURE_RATE, TARGET_RATE):
-        """Process the audio buffer and transcribe it"""
         print("Transcribing...")
-        
+
         try:
-            # Resample to 16000 for Whisper
-            audio_buffer_resampled = librosa.resample(
+            # 🔥 Resample properly before saving
+            import librosa
+            audio_resampled = librosa.resample(
                 audio_buffer,
                 orig_sr=CAPTURE_RATE,
                 target_sr=TARGET_RATE
             )
-            
-            user_text = self.transcriber.transcribe(audio_buffer_resampled)
-            
-            if user_text and user_text.strip():
-                print(f"[Voice Input]: {user_text}")
-                
+
+            # Create filename ONLY (no open handle)
+            temp_path = tempfile.mktemp(suffix=".wav")
+
+            # Save file
+            sf.write(temp_path, audio_resampled, TARGET_RATE)
+
+            # Transcribe
+            with open(temp_path, "rb") as audio_file:
+                transcription = self.client.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3-turbo"
+                )
+
+            user_text = transcription.text.strip()
+
+            # Delete file AFTER closing it
+            os.remove(temp_path)
+
+            if user_text:
+                print("[Voice Input]:", user_text)
                 if self.on_speech_callback:
                     self.on_speech_callback(user_text)
-            else:
-                print("No speech detected")
-                
+
         except Exception as e:
             print(f"Transcription error: {e}")
     

@@ -2,9 +2,12 @@
 import os
 import webbrowser
 import subprocess
+from matplotlib import text
 import pyautogui
 from datetime import datetime
 import platform
+import psutil
+import paperclip
 
 class ToolManager:
 
@@ -25,7 +28,14 @@ class ToolManager:
             "minimize_windows": self.minimize_windows,
             "volume_up": self.volume_up,
             "volume_down": self.volume_down,
-            "mute_volume": self.mute_volume
+            "mute_volume": self.mute_volume,
+            "system_status": self.system_status,
+            "type_text": self.type_text,
+            "press_key": self.press_key,
+            "move_mouse": self.move_mouse,
+            "mouse_click": self.mouse_click,
+            "switch_window": self.switch_window,
+            "read_clipboard": self.read_clipboard,
         }
 
     def execute(self, tool_name, args=None):
@@ -134,3 +144,68 @@ class ToolManager:
         if platform.system() == "Windows":
             pyautogui.press('volumemute')
         return "Volume muted."
+    
+    def system_status(self, args=None):
+        cpu = psutil.cpu_percent(interval=1)
+        ram = psutil.virtual_memory().percent
+        disk = psutil.disk_usage('/').percent
+
+        return f"CPU usage is {cpu} percent. RAM usage is {ram} percent. Disk usage is {disk} percent."
+    
+
+    def type_text(self, args=None):
+        if not args or not args.get("text"):
+            return "No text provided."
+
+        text = args.get("text")
+
+        pyautogui.write(text, interval=0.05)
+        return f"Typing: {text}"
+    
+    def press_key(self, args=None):
+        if not args or not args.get("key"):
+            return "No key provided."
+        
+        key = args.get("key")
+
+        pyautogui.press(key)
+        return f"Pressed Key: {key}"
+    
+    def move_mouse(self, args=None):
+        if not args:
+            return "No coordinates provided."
+        
+        x = args.get("x")
+        y = args.get("y")
+
+        if x is None or y is None:
+            return "Invalid coordinates provided."
+        
+        pyautogui.moveTo(x, y, duration=0.5)
+        return f"Moving mouse to ({x}, {y})"
+    
+    def mouse_click(self, args=None):
+        if not args:
+            return "No click type provided."
+        
+        click_type = args.get("click_type", "left")
+
+        if click_type == "left":
+            pyautogui.click()
+        elif click_type == "right":
+            pyautogui.rightClick()
+        elif click_type == "double":
+            pyautogui.doubleClick()
+        else:
+            return "Invalid click type provided."
+
+        return f"Performed {click_type} mouse click."
+    
+    def switch_window(self, args=None):
+        if platform.system() == "Windows":
+            pyautogui.hotkey('alt', 'tab')
+        return "Switching windows."
+    
+    def read_clipboard(self, args=None):
+        text = paperclip.paste()
+        return f"Clipboard content: {text}"
