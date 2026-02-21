@@ -11,7 +11,17 @@ import paperclip
 
 class ToolManager:
 
-    def __init__(self):
+    def __init__(
+        self,
+        switch_panel_callback=None,
+        start_camera_callback=None,
+        stop_camera_callback=None,
+        stop_voice_callback=None
+    ):
+        self.switch_panel_callback = switch_panel_callback
+        self.start_camera_callback = start_camera_callback
+        self.stop_camera_callback = stop_camera_callback
+        self.stop_voice_callback = stop_voice_callback
         self.tools = {
             "open_browser": self.open_browser,
             "open_notepad": self.open_notepad,
@@ -36,6 +46,10 @@ class ToolManager:
             "mouse_click": self.mouse_click,
             "switch_window": self.switch_window,
             "read_clipboard": self.read_clipboard,
+            "switch_panel": self.switch_panel,
+            "start_camera": self.start_camera_tool,
+            "stop_camera": self.stop_camera_tool,
+            "stop_voice_assistant": self.stop_voice_assistant_tool,
         }
 
     def execute(self, tool_name, args=None):
@@ -209,3 +223,63 @@ class ToolManager:
     def read_clipboard(self, args=None):
         text = paperclip.paste()
         return f"Clipboard content: {text}"
+
+    def switch_panel(self, args=None):
+        if not self.switch_panel_callback:
+            return "Panel switching is not available."
+
+        panel = ""
+        if args:
+            panel = str(args.get("panel", "")).strip().lower()
+
+        aliases = {
+            "face": "face",
+            "face recognition": "face",
+            "recognition": "face",
+            "chat": "chat",
+            "chatbot": "chat",
+            "ai chatbot": "chat",
+            "voice": "voice",
+            "voice assistant": "voice",
+            "assistant": "voice",
+            "dashboard": "dashboard",
+            "stats": "dashboard",
+            "statistics": "dashboard",
+        }
+
+        target_panel = aliases.get(panel, panel)
+        if target_panel not in {"face", "chat", "voice", "dashboard"}:
+            return "Please specify panel: face, chat, voice, or dashboard."
+
+        try:
+            self.switch_panel_callback(target_panel)
+            return f"Switched to {target_panel} panel."
+        except Exception as e:
+            return f"Failed to switch panel: {str(e)}"
+
+    def start_camera_tool(self, args=None):
+        if not self.start_camera_callback:
+            return "Camera control is not available."
+        try:
+            self.start_camera_callback()
+            return "Starting camera."
+        except Exception as e:
+            return f"Failed to start camera: {str(e)}"
+
+    def stop_camera_tool(self, args=None):
+        if not self.stop_camera_callback:
+            return "Camera control is not available."
+        try:
+            self.stop_camera_callback()
+            return "Stopping camera."
+        except Exception as e:
+            return f"Failed to stop camera: {str(e)}"
+
+    def stop_voice_assistant_tool(self, args=None):
+        if not self.stop_voice_callback:
+            return "Voice assistant control is not available."
+        try:
+            self.stop_voice_callback()
+            return "Stopping voice assistant."
+        except Exception as e:
+            return f"Failed to stop voice assistant: {str(e)}"

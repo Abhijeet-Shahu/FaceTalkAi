@@ -1,3 +1,6 @@
 activate facenv
 
 cd Desktop\FinalYearProject\FaceTalkAi\local_app
+
+
+uvicorn main:app --reload

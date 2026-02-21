@@ -53,7 +53,12 @@ class FaceTalkAI:
             on_speech_callback=self.handle_voice_input
         ) 
 
-        self.tool_manager = ToolManager()  # Get tools from the tool manager
+        self.tool_manager = ToolManager(
+            switch_panel_callback=self.switch_panel,
+            start_camera_callback=self.start_camera_from_voice,
+            stop_camera_callback=self.stop_camera_from_voice,
+            stop_voice_callback=self.stop_voice_from_voice
+        )  # Get tools from the tool manager
         
         # Video capture
         self.cap = None
@@ -231,7 +236,7 @@ class FaceTalkAI:
 
         """
 
-        if "Jarvis" not in text:
+        if "jarvis" not in text.lower():
             return  # Ignore if not addressed to the assistant
         
         # show msg to the client
@@ -324,6 +329,10 @@ class FaceTalkAI:
     
     def start_camera(self):
         # Strart video capture
+        if self.running:
+            self.status_label.config(text="Camera is already running")
+            return
+
         try:
             from mobile_camera import MobileCamera
             self.camera = MobileCamera(camera_type="iriun")
@@ -345,6 +354,10 @@ class FaceTalkAI:
     
     def stop_camera(self):
         """Stop video capture"""
+        if not self.running:
+            self.status_label.config(text="Camera is already stopped")
+            return
+
         self.running = False
 
         import time
@@ -449,7 +462,8 @@ class FaceTalkAI:
                 result = self.tool_manager.execute(tool_name, args)
 
                 self.root.after(0, self.display_chat_response, result)
-                self.root.after(0, lambda: self.voice.speak(result))
+                if tool_name != "stop_voice_assistant":
+                    self.root.after(0, lambda: self.voice.speak(result))
                 return
             
             elif data.get("type") == "chat":
@@ -479,6 +493,30 @@ class FaceTalkAI:
     def clear_chat(self):
         """Clear chat history"""
         self.chat_history.delete(1.0, tk.END)
+
+    def switch_panel(self, panel_name):
+        tab_map = {
+            "face": self.face_tab,
+            "chat": self.chat_tab,
+            "voice": self.voice_tab,
+            "dashboard": self.dashboard_tab
+        }
+
+        tab = tab_map.get(panel_name)
+        if not tab:
+            raise ValueError(f"Unknown panel: {panel_name}")
+
+        # Ensure tab selection runs on tkinter main loop thread
+        self.root.after(0, lambda: self.notebook.select(tab))
+
+    def start_camera_from_voice(self):
+        self.root.after(0, self.start_camera)
+
+    def stop_camera_from_voice(self):
+        self.root.after(0, self.stop_camera)
+
+    def stop_voice_from_voice(self):
+        self.root.after(0, self.stop_voice)
     
     def refresh_dashboard(self):
         """Refresh dashboard statistics"""

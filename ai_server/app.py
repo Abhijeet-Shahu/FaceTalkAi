@@ -44,8 +44,17 @@ Available tools:
 - mouse_click
 - switch_window
 - read_clipboard
+- switch_panel (args: {"panel": "face|chat|voice|dashboard"})
+- start_camera
+- stop_camera
+- stop_voice_assistant
 
 Return ONLY valid JSON.
+
+If user asks to change tab/panel/screen in the app, use `switch_panel`.
+If user asks to open/start camera, use `start_camera`.
+If user asks to close/stop camera, use `stop_camera`.
+If user asks to stop/turn off voice assistant/listening, use `stop_voice_assistant`.
 
 If command is tool:
 {
