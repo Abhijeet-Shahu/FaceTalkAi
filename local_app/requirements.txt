@@ -37,3 +37,6 @@ pickle5  # For better pickle compatibility
 cmake  # Required for dlib
 
 pyautogui
+deepface
+
+tf-keras

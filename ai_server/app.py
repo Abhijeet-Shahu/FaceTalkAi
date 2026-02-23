@@ -4,6 +4,8 @@ from groq import Groq
 import os
 import json
 from dotenv import load_dotenv
+from typing import List, Optional, Dict, Any
+import concurrent.futures as cf
 
 load_dotenv()
 
@@ -13,9 +15,54 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 class Message(BaseModel):
     text: str
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = None
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "groq_key_configured": bool(os.getenv("GROQ_API_KEY"))
+    }
+
+
+def quick_route_tool(text: str):
+    t = (text or "").lower()
+
+    if "stop voice" in t or "stop listening" in t or "turn off voice" in t:
+        return {"type": "tool", "tool": "stop_voice_assistant", "args": {}}
+    if "start camera" in t or "open camera" in t:
+        return {"type": "tool", "tool": "start_camera", "args": {}}
+    if "stop camera" in t or "close camera" in t:
+        return {"type": "tool", "tool": "stop_camera", "args": {}}
+    if "open browser" in t:
+        return {"type": "tool", "tool": "open_browser", "args": {}}
+    if "open youtube" in t:
+        return {"type": "tool", "tool": "open_youtube", "args": {}}
+    if "what time" in t or "time now" in t:
+        return {"type": "tool", "tool": "get_time", "args": {}}
+    if "what date" in t or "today date" in t:
+        return {"type": "tool", "tool": "get_date", "args": {}}
+
+    panel_map = {
+        "face": ["face panel", "face tab", "face recognition"],
+        "chat": ["chat panel", "chat tab", "chatbot"],
+        "voice": ["voice panel", "voice tab", "assistant panel"],
+        "dashboard": ["dashboard panel", "dashboard tab", "stats panel"],
+    }
+    for panel, phrases in panel_map.items():
+        if any(p in t for p in phrases):
+            return {"type": "tool", "tool": "switch_panel", "args": {"panel": panel}}
+
+    return None
 
 @app.post("/process")
 def process_message(message: Message):
+    quick = quick_route_tool(message.text)
+    if quick:
+        return quick
 
     system_prompt = """
 You are a system controller AI.
@@ -70,14 +117,47 @@ If normal chat:
 }
 """
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message.text}
-        ],
-        temperature=0
-    )
+    memory_context = ""
+    if message.history:
+        memory_lines = []
+        for item in message.history[-4:]:
+            user_msg = str(item.get("message", ""))[:180]
+            ai_msg = str(item.get("response", ""))[:220]
+            memory_lines.append(f"User: {user_msg}\nAssistant: {ai_msg}")
+        memory_context = "\n\nRecent memory:\n" + "\n---\n".join(memory_lines)
+
+    user_context = f"\nCurrent user: {message.user_name}" if message.user_name else ""
+
+    if not os.getenv("GROQ_API_KEY"):
+        return {
+            "type": "chat",
+            "response": "GROQ_API_KEY is missing on AI server."
+        }
+
+    def run_groq():
+        return client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system_prompt + user_context + memory_context},
+                {"role": "user", "content": message.text}
+            ],
+            temperature=0,
+            max_tokens=220
+        )
+
+    try:
+        with cf.ThreadPoolExecutor(max_workers=1) as executor:
+            response = executor.submit(run_groq).result(timeout=12)
+    except cf.TimeoutError:
+        return {
+            "type": "chat",
+            "response": "I am facing a temporary AI delay. Please try again."
+        }
+    except Exception as e:
+        return {
+            "type": "chat",
+            "response": f"AI server error: {str(e)}"
+        }
 
     output = response.choices[0].message.content
 

@@ -1,6 +1,7 @@
 activate facenv
 
-cd Desktop\FinalYearProject\FaceTalkAi\local_app
+set TF_ENABLE_ONEDNN_OPTS=0
+set TF_CPP_MIN_LOG_LEVEL=2
 
-
-uvicorn main:app --reload
+cd Desktop\FinalYearProject\FaceTalkAi\ai_server
+uvicorn app:app --reload

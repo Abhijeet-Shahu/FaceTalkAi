@@ -6,10 +6,19 @@ import os
 from datetime import datetime
 
 class IntentEngine:
-    def __init__(self, api_key):
-        self.client = Groq(api_key=api_key)
+    def __init__(self, api_key=None):
+        self.client = None
+        self.enabled = False
+        if api_key:
+            self.client = Groq(api_key=api_key)
+            self.enabled = True
+        else:
+            print("⚠️ IntentEngine disabled: No GROQ_API_KEY provided")
     
     def classify(self, text):
+        if not self.enabled:
+            return {"type": "chat"}
+
         prompt = f"""
         You are an AI that classifies user commands into specific tools/actions.
 

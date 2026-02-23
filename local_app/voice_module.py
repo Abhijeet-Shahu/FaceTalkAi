@@ -35,6 +35,10 @@ class VoiceAssistant:
         self.running = False
         self.thread = None
         self.is_speaking = False
+        self.tts_queue = queue.Queue()
+        self.tts_worker_running = True
+        self.tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
+        self.tts_worker.start()
 
     # ---------------------------
     # Start Voice Assistant
@@ -169,30 +173,40 @@ class VoiceAssistant:
     # ---------------------------
     def speak(self, text):
         """
-        Speak text via TTS.
-        Call this from main app after receiving AI response.
+        Queue text for TTS playback.
         """
+        if not text:
+            return
+        self.tts_queue.put(str(text))
+
+    def _tts_worker_loop(self):
+        while self.tts_worker_running:
+            try:
+                text = self.tts_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            self._speak_now(text)
+
+    def _speak_now(self, text):
         self.is_speaking = True
-        
-        # Clear the audio queue to avoid processing our own voice
-        while not self.audio_cap.audio_queue.empty():
-            try:
-                self.audio_cap.audio_queue.get_nowait()
-            except:
-                break
-        
-        # Small delay to ensure queue is clear
-        time.sleep(0.1)
-        
-        # Speak the response
-        self.tts.speak(text)
-        
-        # Clear queue again after speaking
-        while not self.audio_cap.audio_queue.empty():
-            try:
-                self.audio_cap.audio_queue.get_nowait()
-            except:
-                break
-        
-        self.is_speaking = False
-        print("Listening again...")
+        try:
+            # Clear the audio queue to avoid processing our own voice
+            while not self.audio_cap.audio_queue.empty():
+                try:
+                    self.audio_cap.audio_queue.get_nowait()
+                except Exception:
+                    break
+
+            time.sleep(0.1)
+            self.tts.speak(text)
+
+            while not self.audio_cap.audio_queue.empty():
+                try:
+                    self.audio_cap.audio_queue.get_nowait()
+                except Exception:
+                    break
+        except Exception as e:
+            print(f"TTS speak error: {e}")
+        finally:
+            self.is_speaking = False
+            print("Listening again...")

@@ -130,15 +130,37 @@ class SupabaseManager:
         """
         Save chatbot conversation
         """
-        chat_data = {
-            'user_id': user_id,
-            'message': message,
-            'response': response,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        result = self.supabase.table('chatbot_conversations').insert(chat_data).execute()
-        return result.data
+        try:
+            chat_data = {
+                'user_id': user_id,
+                'message': message,
+                'response': response,
+                'timestamp': datetime.now().isoformat()
+            }
+            result = self.supabase.table('chatbot_conversations').insert(chat_data).execute()
+            return result.data
+        except Exception as e:
+            print(f"Chat save error: {e}")
+            return None
+
+    def get_recent_chat_memory(self, user_id=None, limit=10):
+        """
+        Retrieve recent chat memory for personalization.
+        """
+        try:
+            query = self.supabase.table('chatbot_conversations') \
+                .select('message,response,timestamp') \
+                .order('timestamp', desc=True) \
+                .limit(limit)
+
+            if user_id is not None:
+                query = query.eq('user_id', user_id)
+
+            result = query.execute()
+            return list(reversed(result.data)) if result.data else []
+        except Exception as e:
+            print(f"Memory fetch error: {e}")
+            return []
     
     def save_voice_command(self, user_id, command, response, success):
         """

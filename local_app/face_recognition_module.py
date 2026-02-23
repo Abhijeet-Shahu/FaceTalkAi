@@ -7,6 +7,8 @@ import json
 import base64
 from datetime import datetime
 import os
+import time
+import uuid
 
 class FaceRecognizer:
     def __init__(self, db_manager, groq_api_key=None):
@@ -19,6 +21,24 @@ class FaceRecognizer:
         self.known_ids = []
         self.known_face_data = []  # Store additional face data
         self.tolerance = 0.6
+        self.auto_enroll_threshold = 0.48
+        self.auto_enroll_cooldown_sec = 8
+        self.last_auto_enroll_ts = 0.0
+        self.last_seen_unknown_encoding = None
+        self.demographics_cache = {}
+        self.demographics_cache_ttl_sec = 8
+
+        try:
+            from deepface import DeepFace
+            self.DeepFace = DeepFace
+            self.demographics_enabled = True
+            print("✅ DeepFace enabled for age/emotion")
+        except Exception as e:
+            self.DeepFace = None
+            self.demographics_enabled = False
+            print(f"⚠️ DeepFace not available, age/emotion disabled: {str(e)}")
+            if "tf-keras" in str(e).lower() or "tf_keras" in str(e).lower():
+                print("ℹ️ Fix: run `pip install tf-keras` in your active environment.")
         
         # Load known faces from database
         self.load_known_faces()
@@ -40,6 +60,10 @@ class FaceRecognizer:
     def load_known_faces(self):
         """Load all known face encodings from database"""
         try:
+            self.known_encodings = []
+            self.known_names = []
+            self.known_ids = []
+            self.known_face_data = []
             users = self.db.supabase.table('users').select('id, name, face_encoding, email, department').execute()
             
             for user in users.data:
@@ -106,8 +130,11 @@ class FaceRecognizer:
                 name, confidence, user_data = self.identify_face(face_encoding)
                 
                 # Draw rectangle and label
+                face_roi = frame[max(0, top):max(0, bottom), max(0, left):max(0, right)]
+
                 if name != "Unknown":
                     color = (0, 255, 0)  # Green for known
+                    age, emotion = self.estimate_demographics(face_roi, cache_key=str(user_data.get('id')))
                     
                     # Prepare user info for return
                     if user_data:
@@ -116,10 +143,27 @@ class FaceRecognizer:
                             'name': name,
                             'email': user_data.get('email', ''),
                             'department': user_data.get('department', ''),
-                            'confidence': confidence
+                            'confidence': confidence,
+                            'age': age if age is not None else '--',
+                            'emotion': emotion if emotion else '--'
                         }
                 else:
                     color = (0, 0, 255)  # Red for unknown
+                    enrolled_user = self.auto_enroll_unknown(face_encoding, face_roi)
+                    if enrolled_user:
+                        name = enrolled_user.get("name", "New User")
+                        confidence = max(confidence, 0.60)
+                        color = (0, 165, 255)
+                        age, emotion = self.estimate_demographics(face_roi, cache_key=str(enrolled_user.get('id')))
+                        user_info = {
+                            'id': enrolled_user.get('id'),
+                            'name': name,
+                            'email': enrolled_user.get('email', ''),
+                            'department': enrolled_user.get('department', 'Auto-Enrolled'),
+                            'confidence': confidence,
+                            'age': age if age is not None else '--',
+                            'emotion': emotion if emotion else '--'
+                        }
                 
                 # Draw face rectangle
                 cv2.rectangle(annotated_frame, (left, top), (right, bottom), color, 2)
@@ -161,7 +205,7 @@ class FaceRecognizer:
         best_distance = distances[best_match_index]
         
         # Calculate confidence (convert distance to confidence percentage)
-        confidence = max(0, min(100, (1 - best_distance / self.tolerance) * 100))
+        confidence = max(0.0, min(1.0, (1 - best_distance / self.tolerance)))
         
         if best_distance < self.tolerance:
             name = self.known_names[best_match_index]
@@ -174,6 +218,98 @@ class FaceRecognizer:
             return name, confidence, user_data
         else:
             return "Unknown", 0, None
+
+    def estimate_demographics(self, face_roi, cache_key):
+        if face_roi is None or face_roi.size == 0:
+            return None, None
+
+        now_ts = time.time()
+        cached = self.demographics_cache.get(cache_key)
+        if cached and (now_ts - cached["ts"]) <= self.demographics_cache_ttl_sec:
+            return cached["age"], cached["emotion"]
+
+        if not self.demographics_enabled:
+            return None, None
+
+        try:
+            analysis = self.DeepFace.analyze(
+                img_path=face_roi,
+                actions=["age", "emotion"],
+                enforce_detection=False,
+                detector_backend="opencv"
+            )
+
+            if isinstance(analysis, list):
+                analysis = analysis[0] if analysis else {}
+
+            age = int(round(analysis.get("age"))) if analysis.get("age") is not None else None
+            emotion = analysis.get("dominant_emotion")
+            self.demographics_cache[cache_key] = {"age": age, "emotion": emotion, "ts": now_ts}
+            return age, emotion
+        except Exception:
+            return None, None
+
+    def auto_enroll_unknown(self, face_encoding, face_roi):
+        now_ts = time.time()
+        if (now_ts - self.last_auto_enroll_ts) < self.auto_enroll_cooldown_sec:
+            return None
+
+        if self.last_seen_unknown_encoding is not None:
+            try:
+                distance = np.linalg.norm(face_encoding - self.last_seen_unknown_encoding)
+                if distance < self.auto_enroll_threshold:
+                    return None
+            except Exception:
+                pass
+
+        try:
+            profile_image = self.encode_face_image(face_roi)
+            generated_name = f"Visitor-{datetime.now().strftime('%H%M%S')}-{str(uuid.uuid4())[:4]}"
+
+            user_id = self.db.add_user(
+                name=generated_name,
+                face_encoding=face_encoding,
+                email=None,
+                department="Auto-Enrolled",
+                profile_image=profile_image
+            )
+
+            if not user_id:
+                return None
+
+            self.known_encodings.append(np.array(face_encoding))
+            self.known_names.append(generated_name)
+            self.known_ids.append(user_id)
+            self.known_face_data.append({
+                'name': generated_name,
+                'email': '',
+                'department': 'Auto-Enrolled'
+            })
+
+            self.last_auto_enroll_ts = now_ts
+            self.last_seen_unknown_encoding = np.array(face_encoding)
+
+            return {
+                "id": user_id,
+                "name": generated_name,
+                "email": "",
+                "department": "Auto-Enrolled"
+            }
+        except Exception as e:
+            print(f"Auto-enroll error: {e}")
+            return None
+
+    def encode_face_image(self, face_roi):
+        if face_roi is None or face_roi.size == 0:
+            return None
+        try:
+            ok, encoded = cv2.imencode(".jpg", face_roi)
+            if not ok:
+                return None
+            b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+            return f"data:image/jpeg;base64,{b64}"
+        except Exception:
+            return None
     
     def add_ai_insights(self, frame, face_roi, position, name):
         """
