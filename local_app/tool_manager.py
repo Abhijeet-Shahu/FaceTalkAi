@@ -3,6 +3,7 @@ import os
 import platform
 import shutil
 import subprocess
+import ctypes
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -20,12 +21,14 @@ class ToolManager:
         switch_panel_callback=None,
         start_camera_callback=None,
         stop_camera_callback=None,
-        stop_voice_callback=None
+        stop_voice_callback=None,
+        start_voice_callback=None
     ):
         self.switch_panel_callback = switch_panel_callback
         self.start_camera_callback = start_camera_callback
         self.stop_camera_callback = stop_camera_callback
         self.stop_voice_callback = stop_voice_callback
+        self.start_voice_callback = start_voice_callback
 
         self.tools = {
             "open_browser": self.open_browser,
@@ -40,6 +43,9 @@ class ToolManager:
             "open_task_manager": self.open_task_manager,
             "open_settings": self.open_settings,
             "open_control_panel": self.open_control_panel,
+            "open_word": self.open_word,
+            "open_excel": self.open_excel,
+            "open_powerpoint": self.open_powerpoint,
             "shutdown_computer": self.shutdown_computer,
             "restart_computer": self.restart_computer,
             "lock_computer": self.lock_computer,
@@ -49,6 +55,9 @@ class ToolManager:
             "search_google": self.search_google,
             "minimize_windows": self.minimize_windows,
             "switch_window": self.switch_window,
+            "activate_window": self.activate_window,
+            "minimize_window": self.minimize_window,
+            "maximize_window": self.maximize_window,
             "show_desktop": self.show_desktop,
             "refresh_window": self.refresh_window,
             "refresh_desktop": self.refresh_desktop,
@@ -89,7 +98,16 @@ class ToolManager:
             "switch_panel": self.switch_panel,
             "start_camera": self.start_camera_tool,
             "stop_camera": self.stop_camera_tool,
+            "start_voice_assistant": self.start_voice_assistant_tool,
             "stop_voice_assistant": self.stop_voice_assistant_tool,
+            "save_document": self.save_document,
+            "save_document_as": self.save_document_as,
+            "new_slide": self.new_slide,
+            "duplicate_slide": self.duplicate_slide,
+            "start_presentation": self.start_presentation,
+            "next_slide": self.next_slide,
+            "previous_slide": self.previous_slide,
+            "end_presentation": self.end_presentation,
         }
 
     def execute(self, tool_name, args=None):
@@ -129,6 +147,44 @@ class ToolManager:
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         return result.returncode, stdout, stderr
+
+    def _find_window_handle(self, title_fragment):
+        if platform.system() != "Windows" or not title_fragment:
+            return None
+
+        user32 = ctypes.windll.user32
+        matches = []
+        fragment = str(title_fragment).lower()
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def enum_proc(hwnd, lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            title = buffer.value.strip()
+            if title and fragment in title.lower():
+                matches.append((hwnd, title))
+            return True
+
+        user32.EnumWindows(enum_proc, 0)
+        return matches[0] if matches else None
+
+    def _show_window(self, title_fragment, mode):
+        found = self._find_window_handle(title_fragment)
+        if not found:
+            return f"Window not found: {title_fragment}"
+
+        hwnd, title = found
+        user32 = ctypes.windll.user32
+        show_map = {"min": 6, "max": 3, "restore": 9}
+        user32.ShowWindow(hwnd, show_map[mode])
+        user32.SetForegroundWindow(hwnd)
+        action = {"min": "Minimized", "max": "Maximized", "restore": "Activated"}[mode]
+        return f"{action} window: {title}"
 
     def open_any_app(self, args):
         app_name = args.get("app", "")
@@ -235,6 +291,27 @@ class ToolManager:
         except Exception as e:
             return f"Failed to open Control Panel: {str(e)}"
 
+    def open_word(self, args=None):
+        for app in ["winword", "WINWORD.EXE"]:
+            result = self.open_any_app({"app": app})
+            if result.startswith("Opening"):
+                return "Opening Microsoft Word."
+        return "Failed to open Microsoft Word."
+
+    def open_excel(self, args=None):
+        for app in ["excel", "EXCEL.EXE"]:
+            result = self.open_any_app({"app": app})
+            if result.startswith("Opening"):
+                return "Opening Microsoft Excel."
+        return "Failed to open Microsoft Excel."
+
+    def open_powerpoint(self, args=None):
+        for app in ["powerpnt", "POWERPNT.EXE"]:
+            result = self.open_any_app({"app": app})
+            if result.startswith("Opening"):
+                return "Opening Microsoft PowerPoint."
+        return "Failed to open Microsoft PowerPoint."
+
     def take_screenshot(self, args=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"screenshot_{timestamp}.png"
@@ -276,6 +353,24 @@ class ToolManager:
     def switch_window(self, args=None):
         pyautogui.hotkey("alt", "tab")
         return "Switching windows."
+
+    def activate_window(self, args=None):
+        title = (args or {}).get("title") or (args or {}).get("window")
+        if not title:
+            return "Window title is required."
+        return self._show_window(title, "restore")
+
+    def minimize_window(self, args=None):
+        title = (args or {}).get("title") or (args or {}).get("window")
+        if not title:
+            return "Window title is required."
+        return self._show_window(title, "min")
+
+    def maximize_window(self, args=None):
+        title = (args or {}).get("title") or (args or {}).get("window")
+        if not title:
+            return "Window title is required."
+        return self._show_window(title, "max")
 
     def show_desktop(self, args=None):
         pyautogui.hotkey("win", "d")
@@ -421,6 +516,51 @@ class ToolManager:
             return "Stopping voice assistant."
         except Exception as e:
             return f"Failed to stop voice assistant: {str(e)}"
+
+    def start_voice_assistant_tool(self, args=None):
+        if not self.start_voice_callback:
+            return "Voice assistant control is not available."
+        try:
+            self.start_voice_callback()
+            return "Starting voice assistant."
+        except Exception as e:
+            return f"Failed to start voice assistant: {str(e)}"
+
+    def save_document(self, args=None):
+        pyautogui.hotkey("ctrl", "s")
+        return "Saved the current document."
+
+    def save_document_as(self, args=None):
+        pyautogui.press("f12")
+        return "Opened Save As."
+
+    def new_slide(self, args=None):
+        pyautogui.hotkey("ctrl", "m")
+        return "Inserted a new slide."
+
+    def duplicate_slide(self, args=None):
+        pyautogui.hotkey("ctrl", "d")
+        return "Duplicated the current slide or selection."
+
+    def start_presentation(self, args=None):
+        from_beginning = bool((args or {}).get("from_beginning", True))
+        if from_beginning:
+            pyautogui.press("f5")
+            return "Started the presentation from the beginning."
+        pyautogui.hotkey("shift", "f5")
+        return "Started the presentation from the current slide."
+
+    def next_slide(self, args=None):
+        pyautogui.press("right")
+        return "Moved to the next slide."
+
+    def previous_slide(self, args=None):
+        pyautogui.press("left")
+        return "Moved to the previous slide."
+
+    def end_presentation(self, args=None):
+        pyautogui.press("esc")
+        return "Ended the presentation."
 
     def write_file(self, args=None):
         file_path = self._normalize_path((args or {}).get("path") or (args or {}).get("file_path"))

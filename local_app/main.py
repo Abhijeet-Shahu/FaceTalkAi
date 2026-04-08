@@ -66,7 +66,8 @@ class FaceTalkAI:
             switch_panel_callback=self.switch_panel,
             start_camera_callback=self.start_camera_from_voice,
             stop_camera_callback=self.stop_camera_from_voice,
-            stop_voice_callback=self.stop_voice_from_voice
+            stop_voice_callback=self.stop_voice_from_voice,
+            start_voice_callback=self.start_voice_from_remote
         )
         
         # Initialize Mobile Remote Server for controlling from phone
@@ -76,7 +77,8 @@ class FaceTalkAI:
                 host=getattr(Config, 'REMOTE_SERVER_HOST', '0.0.0.0'),
                 port=getattr(Config, 'REMOTE_SERVER_PORT', 8888),
                 tool_manager=self.tool_manager,
-                command_callback=self.handle_mobile_command
+                command_callback=self.handle_mobile_command,
+                status_callback=self.get_mobile_status
             )
             self.mobile_server.start()
         
@@ -160,10 +162,10 @@ class FaceTalkAI:
         
         # Navigation buttons
         nav_buttons = [
-            ("ðŸ” Face Recognition", self.show_face_tab, 2),
-            ("ðŸ’¬ AI Chatbot", self.show_chat_tab, 3),
-            ("ðŸŽ¤ Voice Assistant", self.show_voice_tab, 4),
-            ("ðŸ“Š Dashboard", self.show_dashboard_tab, 5),
+            ("Face Recognition", self.show_face_tab, 2),
+            ("AI Chatbot", self.show_chat_tab, 3),
+            ("Voice Assistant", self.show_voice_tab, 4),
+            ("Dashboard", self.show_dashboard_tab, 5),
         ]
         
         for text, command, row in nav_buttons:
@@ -193,7 +195,7 @@ class FaceTalkAI:
         
         self.sidebar_user_status = ctk.CTkLabel(
             user_frame,
-            text="â— Offline",
+            text="● Offline",
             text_color="gray50",
             font=ctk.CTkFont(size=11)
         )
@@ -224,7 +226,7 @@ class FaceTalkAI:
         # Status label
         self.status_label = ctk.CTkLabel(
             self.status_bar,
-            text="â— Ready",
+            text="● Ready",
             text_color="green",
             font=ctk.CTkFont(size=12)
         )
@@ -236,7 +238,7 @@ class FaceTalkAI:
         
         self.camera_status_label = ctk.CTkLabel(
             self.camera_status_frame,
-            text="ðŸ“· Camera: Off",
+            text="Camera: Off",
             font=ctk.CTkFont(size=12)
         )
         self.camera_status_label.pack(side="left", padx=5)
@@ -317,7 +319,7 @@ class FaceTalkAI:
         
         self.start_btn = ctk.CTkButton(
             control_frame,
-            text="â–¶ Start Camera",
+            text="Start Camera",
             command=self.start_camera,
             fg_color="green",
             hover_color="darkgreen",
@@ -327,7 +329,7 @@ class FaceTalkAI:
         
         self.stop_btn = ctk.CTkButton(
             control_frame,
-            text="â¹ Stop Camera",
+            text="Stop Camera",
             command=self.stop_camera,
             fg_color="red",
             hover_color="darkred",
@@ -347,7 +349,7 @@ class FaceTalkAI:
         
         ctk.CTkLabel(
             user_card,
-            text="ðŸ‘¤ User Information",
+            text="User Information",
             font=ctk.CTkFont(size=16, weight="bold")
         ).grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
         
@@ -408,7 +410,7 @@ class FaceTalkAI:
         
         ctk.CTkLabel(
             log_card,
-            text="ðŸ“‹ Recent Activity",
+            text="Recent Activity",
             font=ctk.CTkFont(size=16, weight="bold")
         ).grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
         
@@ -512,7 +514,7 @@ class FaceTalkAI:
         # Voice icon
         icon_label = ctk.CTkLabel(
             voice_card,
-            text="ðŸŽ¤",
+            text="Voice",
             font=ctk.CTkFont(size=72)
         )
         icon_label.grid(row=0, column=0, padx=20, pady=(40, 20))
@@ -539,7 +541,7 @@ class FaceTalkAI:
         
         self.voice_start_btn = ctk.CTkButton(
             button_frame,
-            text="â–¶ Start Listening",
+            text="Start Listening",
             command=self.start_voice,
             fg_color="green",
             hover_color="darkgreen",
@@ -551,7 +553,7 @@ class FaceTalkAI:
         
         self.voice_stop_btn = ctk.CTkButton(
             button_frame,
-            text="â¹ Stop Listening",
+            text="Stop Listening",
             command=self.stop_voice,
             fg_color="red",
             hover_color="darkred",
@@ -694,7 +696,7 @@ class FaceTalkAI:
         # Refresh button
         ctk.CTkButton(
             activity_frame,
-            text="ðŸ”„ Refresh Dashboard",
+            text="Refresh Dashboard",
             command=self.refresh_dashboard,
             height=40
         ).grid(row=2, column=0, padx=20, pady=(0, 20), sticky="ew")
@@ -710,7 +712,7 @@ class FaceTalkAI:
     
     def handle_mobile_command(self, command):
         """Handle commands received from mobile remote control"""
-        print(f"ðŸ“± Processing mobile command: {command}")
+        print(f"Processing mobile command: {command}")
         
         # Process through intent engine like voice commands
         try:
@@ -722,15 +724,15 @@ class FaceTalkAI:
                 response = self.tool_manager.execute(tool_name, args)
                 
                 # Show in chat history
-                self.window.after(0, lambda: self.insert_chat_message(f"ðŸ“± Mobile: {command}\n"))
-                self.window.after(0, lambda r=response: self.insert_chat_message(f"ðŸ¤– Response: {r}\n"))
+                self.window.after(0, lambda: self.insert_chat_message(f"Mobile: {command}\n"))
+                self.window.after(0, lambda r=response: self.insert_chat_message(f"Response: {r}\n"))
                 
                 return response
             else:
                 # Regular chat response
                 response = result.get('response', 'Command processed')
-                self.window.after(0, lambda: self.insert_chat_message(f"ðŸ“± Mobile: {command}\n"))
-                self.window.after(0, lambda r=response: self.insert_chat_message(f"ðŸ¤– Response: {r}\n"))
+                self.window.after(0, lambda: self.insert_chat_message(f"Mobile: {command}\n"))
+                self.window.after(0, lambda r=response: self.insert_chat_message(f"Response: {r}\n"))
                 return response
                 
         except Exception as e:
@@ -772,6 +774,13 @@ class FaceTalkAI:
         print(note)
         if hasattr(self, 'chat_history'):
             self.insert_chat_message(f"System: {message}\n")
+
+    def get_mobile_status(self):
+        return {
+            "voice_running": bool(getattr(self.voice, "running", False)),
+            "camera_running": bool(self.running),
+            "current_user": self.current_user.get("name") if self.current_user else None
+        }
 
     def run_startup_checks(self):
         threading.Thread(target=self._startup_checks_worker, daemon=True).start()
@@ -833,7 +842,7 @@ class FaceTalkAI:
     def start_camera(self):
         """Start video capture"""
         if self.running:
-            self.status_label.configure(text="â— Camera is already running")
+            self.status_label.configure(text="● Camera is already running")
             return
         
         try:
@@ -847,9 +856,9 @@ class FaceTalkAI:
             self.running = True
             self.start_btn.configure(state="disabled")
             self.stop_btn.configure(state="normal")
-            self.camera_status_label.configure(text="ðŸ“· Camera: On")
+            self.camera_status_label.configure(text="Camera: On")
             source = getattr(self.camera, "connected_source", "unknown")
-            self.status_label.configure(text=f"â— Camera active ({source})")
+            self.status_label.configure(text=f"● Camera active ({source})")
             
             self.video_thread = threading.Thread(target=self.process_video, daemon=True)
             self.video_thread.start()
@@ -860,7 +869,7 @@ class FaceTalkAI:
     def stop_camera(self):
         """Stop video capture"""
         if not self.running:
-            self.status_label.configure(text="â— Camera is already stopped")
+            self.status_label.configure(text="● Camera is already stopped")
             return
         
         self.running = False
@@ -872,8 +881,8 @@ class FaceTalkAI:
         
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self.camera_status_label.configure(text="ðŸ“· Camera: Off")
-        self.status_label.configure(text="â— Camera stopped")
+        self.camera_status_label.configure(text="Camera: Off")
+        self.status_label.configure(text="● Camera stopped")
         
         # Clear video display
         self.video_label.configure(text="Camera Feed\n\nClick 'Start Camera' to begin")
@@ -969,7 +978,7 @@ class FaceTalkAI:
             greeting = f"Welcome {user_name}. Good to see you."
             threading.Thread(target=self.voice.speak, args=(greeting,), daemon=True).start()
             self.add_to_log(f"Greeted {user_name}")
-            self.status_label.configure(text=f"â— Greeted {user_name}")
+            self.status_label.configure(text=f"● Greeted {user_name}")
             self.last_greeted_at[user_key] = now_ts
         
         self.active_user_id = user_key
@@ -1135,6 +1144,10 @@ class FaceTalkAI:
     def stop_voice_from_voice(self):
         """Stop voice assistant from voice command"""
         self.window.after(0, self.stop_voice)
+
+    def start_voice_from_remote(self):
+        """Start voice assistant from remote command"""
+        self.window.after(0, self.start_voice)
     
     def start_voice(self):
         """Start voice assistant"""
@@ -1149,7 +1162,7 @@ class FaceTalkAI:
             self.display_chat_response(f"Error: Voice start failed: {str(e)}")
             return
         self.update_voice_status_ui("Status: Listening...")
-        self.status_label.configure(text="â— Voice Assistant Active")
+        self.status_label.configure(text="● Voice Assistant Active")
     
     def stop_voice(self):
         """Stop voice assistant"""
@@ -1158,7 +1171,7 @@ class FaceTalkAI:
             return
         self.voice.stop()
         self.update_voice_status_ui("Status: Stopped")
-        self.status_label.configure(text="â— Voice Assistant Stopped")
+        self.status_label.configure(text="● Voice Assistant Stopped")
     
     def refresh_dashboard(self):
         """Refresh dashboard statistics"""

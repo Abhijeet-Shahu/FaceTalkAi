@@ -33,6 +33,8 @@ def quick_route_tool(text: str):
 
     if "stop voice" in t or "stop listening" in t or "turn off voice" in t:
         return {"type": "tool", "tool": "stop_voice_assistant", "args": {}}
+    if "start voice" in t or "start listening" in t or "turn on voice" in t:
+        return {"type": "tool", "tool": "start_voice_assistant", "args": {}}
     if "start camera" in t or "open camera" in t:
         return {"type": "tool", "tool": "start_camera", "args": {}}
     if "stop camera" in t or "close camera" in t:
@@ -93,7 +95,13 @@ Available tools:
 - open_instagram
 - open_facebook
 - open_any_app
+- open_word
+- open_excel
+- open_powerpoint
 - minimize_windows
+- activate_window
+- minimize_window
+- maximize_window
 - volume_up
 - volume_down
 - mute_volume
@@ -108,6 +116,14 @@ Available tools:
 - run_command
 - type_text
 - type_secret
+- save_document
+- save_document_as
+- new_slide
+- duplicate_slide
+- start_presentation
+- next_slide
+- previous_slide
+- end_presentation
 - press_key
 - move_mouse
 - mouse_click
@@ -133,6 +149,7 @@ Available tools:
 - switch_panel (args: {"panel": "face|chat|voice|dashboard"})
 - start_camera
 - stop_camera
+- start_voice_assistant
 - stop_voice_assistant
 
 Return ONLY valid JSON.
@@ -142,6 +159,7 @@ Be friendly in normal chat mode. Casual conversation is allowed, and replies sho
 If user asks to change tab/panel/screen in the app, use `switch_panel`.
 If user asks to open/start camera, use `start_camera`.
 If user asks to close/stop camera, use `stop_camera`.
+If user asks to start voice assistant/listening, use `start_voice_assistant`.
 If user asks to stop/turn off voice assistant/listening, use `stop_voice_assistant`.
 
 If command is tool:

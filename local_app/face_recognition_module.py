@@ -1,14 +1,23 @@
 # face_recognition_module.py
-import face_recognition
-import cv2
-import numpy as np
-from groq import Groq
+import warnings
+import pickle
 import json
 import base64
 from datetime import datetime
 import os
 import time
 import uuid
+
+import face_recognition
+import cv2
+import numpy as np
+from groq import Groq
+
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning
+)
 
 class FaceRecognizer:
     def __init__(self, db_manager, groq_api_key=None, on_unknown_face_callback=None):
@@ -30,6 +39,7 @@ class FaceRecognizer:
         self.demographics_cache = {}
         self.demographics_cache_ttl_sec = 8
         self.deepface_backends = ["opencv", "skip"]
+        self.local_cache_path = os.path.join(os.path.dirname(__file__), "encodings.pickle")
 
         # Frame skipping for performance optimization
         self.frame_skip = 2  # Process every Nth frame (1=all, 2=every other, 3=every third)
@@ -52,6 +62,10 @@ class FaceRecognizer:
 
         # Load known faces from database
         self.load_known_faces()
+        if self.known_encodings:
+            self._save_local_face_cache()
+        else:
+            self._load_local_face_cache()
 
         # Initialize Groq client if API key provided
         if groq_api_key:
@@ -93,6 +107,41 @@ class FaceRecognizer:
         except Exception as e:
             print(f"❌ Error loading faces: {e}")
     
+    def _save_local_face_cache(self):
+        try:
+            payload = {
+                "encodings": [encoding.tolist() for encoding in self.known_encodings],
+                "names": list(self.known_names)
+            }
+            with open(self.local_cache_path, "wb") as cache_file:
+                pickle.dump(payload, cache_file)
+        except Exception:
+            pass
+
+    def _load_local_face_cache(self):
+        if not os.path.exists(self.local_cache_path):
+            return
+
+        try:
+            with open(self.local_cache_path, "rb") as cache_file:
+                data = pickle.load(cache_file)
+
+            cached_encodings = data.get("encodings", [])
+            cached_names = data.get("names", [])
+            if not cached_encodings or not cached_names:
+                return
+
+            self.known_encodings = [np.array(encoding) for encoding in cached_encodings]
+            self.known_names = list(cached_names)
+            self.known_ids = [None] * len(self.known_names)
+            self.known_face_data = [
+                {"name": name, "email": "", "department": "Local Cache"}
+                for name in self.known_names
+            ]
+            print(f"Loaded {len(self.known_encodings)} known faces from local cache")
+        except Exception as cache_error:
+            print(f"Local face cache load failed: {cache_error}")
+
     def process_frame(self, frame, force_process=False):
         """
         Process a single frame for face recognition

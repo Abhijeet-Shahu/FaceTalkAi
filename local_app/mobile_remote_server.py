@@ -1,24 +1,14 @@
-# mobile_remote_server.py
 """
-Mobile Remote Control Server for FaceTalkAI
-Allows controlling the desktop app from mobile devices via WiFi
-
-Usage:
-1. Start the server on desktop
-2. Connect mobile to same WiFi network
-3. Open browser on mobile and go to http://<desktop-ip>:8888
-4. Use voice or text commands to control desktop
+Mobile Remote Control Server for FaceTalkAI.
 """
 
-import threading
 import json
 import socket
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
-import os
+import threading
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
 
-# HTML template for mobile web interface
 MOBILE_WEB_PAGE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -35,7 +25,7 @@ MOBILE_WEB_PAGE = """
             min-height: 100vh;
             padding: 20px;
         }
-        .container { max-width: 400px; margin: 0 auto; }
+        .container { max-width: 420px; margin: 0 auto; }
         h1 {
             text-align: center;
             font-size: 24px;
@@ -48,9 +38,13 @@ MOBILE_WEB_PAGE = """
             padding: 15px;
             margin-bottom: 20px;
             text-align: center;
+            border: 2px solid #00ff88;
         }
-        .status.connected { border: 2px solid #00ff88; }
-        .status.disconnected { border: 2px solid #ff4444; }
+        .status-line {
+            font-size: 12px;
+            margin-top: 5px;
+            color: rgba(255,255,255,0.78);
+        }
         .command-input {
             width: 100%;
             padding: 15px;
@@ -76,28 +70,39 @@ MOBILE_WEB_PAGE = """
         .btn-primary { background: #00d9ff; color: #000; font-weight: bold; }
         .btn-voice { background: #ff4757; color: #fff; }
         .btn-voice.listening { background: #2ed573; animation: pulse 1s infinite; }
+        .button-row {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .panel-buttons {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-top: 15px;
+        }
+        .panel-btn, .quick-btn {
+            padding: 14px 8px;
+            font-size: 12px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 10px;
+            color: #fff;
+        }
         .quick-commands {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 10px;
             margin-top: 20px;
         }
-        .quick-btn {
-            padding: 20px 10px;
-            font-size: 14px;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 12px;
-            color: #fff;
-        }
         .response-box {
             background: rgba(0,0,0,0.3);
             border-radius: 12px;
             padding: 15px;
             margin-top: 20px;
-            min-height: 100px;
-            max-height: 200px;
+            min-height: 120px;
+            max-height: 240px;
             overflow-y: auto;
         }
         .response-item {
@@ -106,56 +111,48 @@ MOBILE_WEB_PAGE = """
         }
         .response-item:last-child { border-bottom: none; }
         .response-time { font-size: 12px; color: #888; }
-        .panel-buttons {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            margin-top: 15px;
-        }
-        .panel-btn {
-            padding: 12px 5px;
-            font-size: 12px;
-            background: #0f3460;
-            border: 1px solid #00d9ff;
-            border-radius: 8px;
-            color: #00d9ff;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎙️ FaceTalk AI Remote</h1>
-        
-        <div class="status connected" id="status">
+        <h1>FaceTalk AI Remote</h1>
+
+        <div class="status" id="status">
             <strong>Connected to Desktop</strong>
-            <div style="font-size: 12px; margin-top: 5px;" id="ip-display"></div>
+            <div class="status-line" id="ip-display"></div>
+            <div class="status-line" id="voice-state">Desktop voice: checking...</div>
+            <div class="status-line" id="camera-state">Camera: checking...</div>
         </div>
 
-        <input type="text" class="command-input" id="commandInput" 
-               placeholder="Type a command..." autocomplete="off">
-        
+        <input type="text" class="command-input" id="commandInput" placeholder="Type a command..." autocomplete="off">
         <button class="btn btn-primary" onclick="sendCommand()">Send Command</button>
-        
-        <button class="btn btn-voice" id="voiceBtn" onclick="toggleVoice()">
-            🎤 Hold to Speak
-        </button>
+
+        <div class="button-row">
+            <button class="btn btn-voice" id="mobileVoiceStartBtn" onclick="startMobileVoice()">Start Mobile Mic</button>
+            <button class="btn btn-voice" id="mobileVoiceStopBtn" onclick="stopMobileVoice()">Stop Mobile Mic</button>
+        </div>
+
+        <div class="button-row">
+            <button class="btn btn-primary" onclick="quickCmd('start voice assistant')">Start Desktop Voice</button>
+            <button class="btn btn-primary" onclick="quickCmd('stop voice assistant')">Stop Desktop Voice</button>
+        </div>
 
         <div class="panel-buttons">
-            <button class="panel-btn" onclick="switchPanel('face')">👤 Face</button>
-            <button class="panel-btn" onclick="switchPanel('chat')">💬 Chat</button>
-            <button class="panel-btn" onclick="switchPanel('voice')">🎙️ Voice</button>
-            <button class="panel-btn" onclick="switchPanel('dashboard')">📊 Dashboard</button>
+            <button class="panel-btn" onclick="switchPanel('face')">Face</button>
+            <button class="panel-btn" onclick="switchPanel('chat')">Chat</button>
+            <button class="panel-btn" onclick="switchPanel('voice')">Voice</button>
+            <button class="panel-btn" onclick="switchPanel('dashboard')">Dashboard</button>
         </div>
 
         <div class="quick-commands">
-            <button class="quick-btn" onclick="quickCmd('open browser')">🌐 Browser</button>
-            <button class="quick-btn" onclick="quickCmd('take screenshot')">📸 Screenshot</button>
-            <button class="quick-btn" onclick="quickCmd('volume up')">🔊 Vol Up</button>
-            <button class="quick-btn" onclick="quickCmd('volume down')">🔉 Vol Down</button>
-            <button class="quick-btn" onclick="quickCmd('open notepad')">📝 Notepad</button>
-            <button class="quick-btn" onclick="quickCmd('open calculator')">🧮 Calculator</button>
-            <button class="quick-btn" onclick="quickCmd('lock computer')">🔒 Lock</button>
-            <button class="quick-btn" onclick="quickCmd('minimize windows')">⬇️ Minimize</button>
+            <button class="quick-btn" onclick="quickCmd('open browser')">Browser</button>
+            <button class="quick-btn" onclick="quickCmd('take screenshot')">Screenshot</button>
+            <button class="quick-btn" onclick="quickCmd('open word')">Word</button>
+            <button class="quick-btn" onclick="quickCmd('open excel')">Excel</button>
+            <button class="quick-btn" onclick="quickCmd('open powerpoint')">PowerPoint</button>
+            <button class="quick-btn" onclick="quickCmd('start presentation')">Present</button>
+            <button class="quick-btn" onclick="quickCmd('next slide')">Next Slide</button>
+            <button class="quick-btn" onclick="quickCmd('minimize FaceTalk')">Min FaceTalk</button>
         </div>
 
         <div class="response-box" id="responses">
@@ -172,93 +169,99 @@ MOBILE_WEB_PAGE = """
 
         document.getElementById('ip-display').textContent = 'Server: ' + window.location.host;
 
-        // Send command via fetch
         async function sendCommand(cmd) {
             const command = cmd || document.getElementById('commandInput').value.trim();
             if (!command) return;
-            
+
             document.getElementById('commandInput').value = '';
-            addResponse('You: ' + command, 'sending...');
-            
+            addResponse('You: ' + command);
+
             try {
                 const response = await fetch('/command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: command })
+                    body: JSON.stringify({ command })
                 });
                 const data = await response.json();
-                addResponse('Desktop: ' + (data.response || data.message || 'Done'), 'completed');
+                addResponse('Desktop: ' + (data.response || data.message || 'Done'));
+                refreshStatus();
             } catch (err) {
-                addResponse('Error: Could not reach desktop', 'failed');
+                addResponse('Error: Could not reach desktop');
             }
         }
 
         function quickCmd(cmd) { sendCommand(cmd); }
-        
         function switchPanel(panel) { sendCommand('switch to ' + panel + ' panel'); }
 
-        function addResponse(text, status) {
+        function addResponse(text) {
             const box = document.getElementById('responses');
             const time = new Date().toLocaleTimeString();
             const item = document.createElement('div');
             item.className = 'response-item';
             item.innerHTML = '<div>' + text + '</div><div class="response-time">' + time + '</div>';
             box.insertBefore(item, box.firstChild);
-            if (box.children.length > 10) box.removeChild(box.lastChild);
+            if (box.children.length > 12) box.removeChild(box.lastChild);
         }
 
-        // Voice recognition (Web Speech API)
-        function toggleVoice() {
-            const btn = document.getElementById('voiceBtn');
-            
+        function ensureRecognition() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                alert('Voice recognition not supported in this browser. Use Chrome on Android.');
-                return;
+                alert('Voice recognition is not supported in this browser. Use Chrome on Android.');
+                return false;
             }
-
-            if (isListening) {
-                recognition.stop();
-                isListening = false;
-                btn.classList.remove('listening');
-                btn.textContent = '🎤 Hold to Speak';
-                return;
+            if (!recognition) {
+                recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                recognition.lang = 'en-US';
+                recognition.onstart = function() {
+                    isListening = true;
+                    document.getElementById('mobileVoiceStartBtn').classList.add('listening');
+                    document.getElementById('mobileVoiceStartBtn').textContent = 'Listening...';
+                };
+                recognition.onresult = function(event) {
+                    const transcript = event.results[0][0].transcript;
+                    document.getElementById('commandInput').value = transcript;
+                    sendCommand(transcript);
+                };
+                recognition.onerror = function(event) {
+                    addResponse('Voice error: ' + event.error);
+                };
+                recognition.onend = function() {
+                    isListening = false;
+                    document.getElementById('mobileVoiceStartBtn').classList.remove('listening');
+                    document.getElementById('mobileVoiceStartBtn').textContent = 'Start Mobile Mic';
+                };
             }
+            return true;
+        }
 
-            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.continuous = false;
-            recognition.interimResults = false;
-            recognition.lang = 'en-US';
-
-            recognition.onstart = function() {
-                isListening = true;
-                btn.classList.add('listening');
-                btn.textContent = '🔴 Listening...';
-            };
-
-            recognition.onresult = function(event) {
-                const transcript = event.results[0][0].transcript;
-                document.getElementById('commandInput').value = transcript;
-                sendCommand(transcript);
-            };
-
-            recognition.onerror = function(event) {
-                console.error('Speech error:', event.error);
-                addResponse('Voice error: ' + event.error, 'failed');
-            };
-
-            recognition.onend = function() {
-                isListening = false;
-                btn.classList.remove('listening');
-                btn.textContent = '🎤 Hold to Speak';
-            };
-
+        function startMobileVoice() {
+            if (!ensureRecognition() || isListening) return;
             recognition.start();
         }
 
-        // Handle Enter key
+        function stopMobileVoice() {
+            if (recognition && isListening) recognition.stop();
+        }
+
+        async function refreshStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                document.getElementById('voice-state').textContent = 'Desktop voice: ' + (data.voice_running ? 'running' : 'stopped');
+                document.getElementById('camera-state').textContent = 'Camera: ' + (data.camera_running ? 'running' : 'stopped');
+            } catch (err) {
+                document.getElementById('voice-state').textContent = 'Desktop voice: unavailable';
+                document.getElementById('camera-state').textContent = 'Camera: unavailable';
+            }
+        }
+
         document.getElementById('commandInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') sendCommand();
         });
+
+        refreshStatus();
+        setInterval(refreshStatus, 3000);
     </script>
 </body>
 </html>
@@ -266,244 +269,251 @@ MOBILE_WEB_PAGE = """
 
 
 class MobileRemoteHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for mobile remote commands"""
-    
     tool_manager = None
     command_callback = None
-    
+    status_callback = None
+
     def log_message(self, format, *args):
-        # Suppress default logging
         pass
-    
-    def _set_headers(self, content_type='text/html', status=200):
+
+    def _set_headers(self, content_type="text/html", status=200):
         self.send_response(status)
-        self.send_header('Content-type', content_type)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header("Content-type", content_type)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
-    
+
     def do_OPTIONS(self):
         self._set_headers()
-    
+
     def do_GET(self):
         parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == '/' or parsed_path.path == '/index.html':
-            self._set_headers('text/html')
+        if parsed_path.path in {"/", "/index.html"}:
+            self._set_headers("text/html")
             self.wfile.write(MOBILE_WEB_PAGE.encode())
-        
-        elif parsed_path.path == '/status':
-            self._set_headers('application/json')
+            return
+
+        if parsed_path.path == "/status":
+            self._set_headers("application/json")
             response = {
-                'status': 'online',
-                'app': 'FaceTalk AI',
-                'timestamp': datetime.now().isoformat()
+                "status": "online",
+                "app": "FaceTalk AI",
+                "timestamp": datetime.now().isoformat()
             }
+            if MobileRemoteHandler.status_callback:
+                try:
+                    response.update(MobileRemoteHandler.status_callback() or {})
+                except Exception as e:
+                    response["status_error"] = str(e)
             self.wfile.write(json.dumps(response).encode())
-        
-        else:
-            self.send_error(404, 'Not Found')
-    
+            return
+
+        self.send_error(404, "Not Found")
+
     def do_POST(self):
         parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == '/command':
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                data = json.loads(post_data.decode())
-                command = data.get('command', '').strip()
-                
-                if not command:
-                    self._set_headers('application/json', 400)
-                    self.wfile.write(json.dumps({'error': 'No command provided'}).encode())
-                    return
-                
-                # Process the command
-                response = self._process_command(command)
-                
-                self._set_headers('application/json')
-                self.wfile.write(json.dumps(response).encode())
-                
-            except json.JSONDecodeError:
-                self._set_headers('application/json', 400)
-                self.wfile.write(json.dumps({'error': 'Invalid JSON'}).encode())
-            except Exception as e:
-                self._set_headers('application/json', 500)
-                self.wfile.write(json.dumps({'error': str(e)}).encode())
-        else:
-            self.send_error(404, 'Not Found')
-    
+        if parsed_path.path != "/command":
+            self.send_error(404, "Not Found")
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(post_data.decode())
+            command = data.get("command", "").strip()
+            if not command:
+                self._set_headers("application/json", 400)
+                self.wfile.write(json.dumps({"error": "No command provided"}).encode())
+                return
+
+            response = self._process_command(command)
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps(response).encode())
+        except json.JSONDecodeError:
+            self._set_headers("application/json", 400)
+            self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+        except Exception as e:
+            self._set_headers("application/json", 500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
     def _process_command(self, command):
-        """Process incoming command and execute via tool manager"""
-        print(f"📱 Mobile command received: {command}")
-        
-        # First try quick routing
+        print(f"Mobile command received: {command}")
+
         result = self._quick_route(command)
         if result:
             return result
-        
-        # If callback is set, use it (for integration with main app)
+
         if MobileRemoteHandler.command_callback:
             try:
                 response = MobileRemoteHandler.command_callback(command)
-                return {'response': response, 'status': 'success'}
+                return {"response": response, "status": "success"}
             except Exception as e:
-                return {'response': f'Error: {str(e)}', 'status': 'error'}
-        
-        # Direct tool execution if tool manager is available
+                return {"response": f"Error: {str(e)}", "status": "error"}
+
         if MobileRemoteHandler.tool_manager:
             return self._execute_with_tool_manager(command)
-        
-        return {'response': 'Command received but no handler configured', 'status': 'pending'}
-    
+
+        return {"response": "Command received but no handler configured", "status": "pending"}
+
     def _quick_route(self, command):
-        """Quick pattern matching for common commands"""
         cmd = command.lower()
-        
-        # Panel switching
         panel_keywords = {
-            'face': ['face panel', 'face tab', 'switch to face', 'open face', 'face recognition'],
-            'chat': ['chat panel', 'chat tab', 'switch to chat', 'open chat', 'chatbot'],
-            'voice': ['voice panel', 'voice tab', 'switch to voice', 'open voice', 'assistant'],
-            'dashboard': ['dashboard panel', 'dashboard tab', 'switch to dashboard', 'stats', 'statistics']
+            "face": ["face panel", "face tab", "switch to face", "open face", "face recognition"],
+            "chat": ["chat panel", "chat tab", "switch to chat", "open chat", "chatbot"],
+            "voice": ["voice panel", "voice tab", "switch to voice", "open voice", "assistant"],
+            "dashboard": ["dashboard panel", "dashboard tab", "switch to dashboard", "stats", "statistics"],
         }
-        
+
         for panel, keywords in panel_keywords.items():
-            if any(kw in cmd for kw in keywords):
-                if MobileRemoteHandler.tool_manager:
-                    result = MobileRemoteHandler.tool_manager.execute('switch_panel', {'panel': panel})
-                    return {'response': result, 'status': 'success', 'tool': 'switch_panel'}
-        
+            if any(keyword in cmd for keyword in keywords) and MobileRemoteHandler.tool_manager:
+                result = MobileRemoteHandler.tool_manager.execute("switch_panel", {"panel": panel})
+                return {"response": result, "status": "success", "tool": "switch_panel"}
+
+        if ("start voice" in cmd or "start listening" in cmd) and MobileRemoteHandler.tool_manager:
+            result = MobileRemoteHandler.tool_manager.execute("start_voice_assistant", {})
+            return {"response": result, "status": "success", "tool": "start_voice_assistant"}
+
+        if ("stop voice" in cmd or "stop listening" in cmd) and MobileRemoteHandler.tool_manager:
+            result = MobileRemoteHandler.tool_manager.execute("stop_voice_assistant", {})
+            return {"response": result, "status": "success", "tool": "stop_voice_assistant"}
+
         return None
-    
+
     def _execute_with_tool_manager(self, command):
-        """Execute command using tool manager with pattern matching"""
         cmd = command.lower()
-        
+
+        if "minimize " in cmd and "facetalk" in cmd:
+            result = MobileRemoteHandler.tool_manager.execute("minimize_window", {"title": "FaceTalk"})
+            return {"response": result, "status": "success", "tool": "minimize_window"}
+        if "maximize " in cmd and "facetalk" in cmd:
+            result = MobileRemoteHandler.tool_manager.execute("maximize_window", {"title": "FaceTalk"})
+            return {"response": result, "status": "success", "tool": "maximize_window"}
+
         tool_patterns = {
-            'open browser': ('open_browser', {}),
-            'open notepad': ('open_notepad', {}),
-            'open calculator': ('open_calculator', {}),
-            'take screenshot': ('take_screenshot', {}),
-            'what time': ('get_time', {}),
-            'get time': ('get_time', {}),
-            'what date': ('get_date', {}),
-            'get date': ('get_date', {}),
-            'open youtube': ('open_youtube', {}),
-            'minimize': ('minimize_windows', {}),
-            'volume up': ('volume_up', {}),
-            'volume down': ('volume_down', {}),
-            'mute': ('mute_volume', {}),
-            'system status': ('system_status', {}),
-            'lock computer': ('lock_computer', {}),
-            'lock screen': ('lock_computer', {}),
-            'start camera': ('start_camera', {}),
-            'open camera': ('start_camera', {}),
-            'stop camera': ('stop_camera', {}),
-            'close camera': ('stop_camera', {}),
-            'stop voice': ('stop_voice_assistant', {}),
-            'stop listening': ('stop_voice_assistant', {}),
+            "open browser": ("open_browser", {}),
+            "open notepad": ("open_notepad", {}),
+            "open calculator": ("open_calculator", {}),
+            "open word": ("open_word", {}),
+            "open excel": ("open_excel", {}),
+            "open powerpoint": ("open_powerpoint", {}),
+            "open power point": ("open_powerpoint", {}),
+            "take screenshot": ("take_screenshot", {}),
+            "what time": ("get_time", {}),
+            "get time": ("get_time", {}),
+            "what date": ("get_date", {}),
+            "get date": ("get_date", {}),
+            "open youtube": ("open_youtube", {}),
+            "minimize": ("minimize_windows", {}),
+            "volume up": ("volume_up", {}),
+            "volume down": ("volume_down", {}),
+            "mute": ("mute_volume", {}),
+            "system status": ("system_status", {}),
+            "lock computer": ("lock_computer", {}),
+            "lock screen": ("lock_computer", {}),
+            "start camera": ("start_camera", {}),
+            "open camera": ("start_camera", {}),
+            "stop camera": ("stop_camera", {}),
+            "close camera": ("stop_camera", {}),
+            "start voice": ("start_voice_assistant", {}),
+            "start listening": ("start_voice_assistant", {}),
+            "stop voice": ("stop_voice_assistant", {}),
+            "stop listening": ("stop_voice_assistant", {}),
+            "start presentation": ("start_presentation", {}),
+            "present powerpoint": ("start_presentation", {}),
+            "next slide": ("next_slide", {}),
+            "previous slide": ("previous_slide", {}),
+            "duplicate slide": ("duplicate_slide", {}),
+            "new slide": ("new_slide", {}),
+            "save document": ("save_document", {}),
+            "save as": ("save_document_as", {}),
         }
-        
+
         for pattern, (tool_name, args) in tool_patterns.items():
             if pattern in cmd:
                 result = MobileRemoteHandler.tool_manager.execute(tool_name, args)
-                return {'response': result, 'status': 'success', 'tool': tool_name}
-        
-        # If no pattern matched, return generic response
+                return {"response": result, "status": "success", "tool": tool_name}
+
         return {
-            'response': f'Command "{command}" received. Try specific commands like "open browser" or "take screenshot".',
-            'status': 'unrecognized'
+            "response": f'Command "{command}" received. Try commands like "open word", "start presentation", or "minimize FaceTalk".',
+            "status": "unrecognized"
         }
 
 
 class MobileRemoteServer:
-    """Mobile Remote Control Server"""
-    
-    def __init__(self, host='0.0.0.0', port=8888, tool_manager=None, command_callback=None):
+    def __init__(self, host="0.0.0.0", port=8888, tool_manager=None, command_callback=None, status_callback=None):
         self.host = host
         self.port = port
         self.server = None
         self.server_thread = None
         self.is_running = False
-        
-        # Set class-level references for the handler
         MobileRemoteHandler.tool_manager = tool_manager
         MobileRemoteHandler.command_callback = command_callback
-    
+        MobileRemoteHandler.status_callback = status_callback
+
     def get_local_ip(self):
-        """Get local IP address for mobile connection"""
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(('8.8.8.8', 80))
-            ip = s.getsockname()[0]
-            s.close()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            sock.close()
             return ip
         except Exception:
-            return '127.0.0.1'
-    
+            return "127.0.0.1"
+
     def start(self):
-        """Start the mobile remote server"""
         if self.is_running:
-            print("⚠️ Mobile remote server already running")
+            print("Mobile remote server already running")
             return False
-        
+
         try:
             self.server = HTTPServer((self.host, self.port), MobileRemoteHandler)
             self.server_thread = threading.Thread(target=self._run_server, daemon=True)
             self.server_thread.start()
             self.is_running = True
-            
+
             local_ip = self.get_local_ip()
-            print(f"\n{'='*50}")
-            print(f"📱 Mobile Remote Server Started!")
-            print(f"{'='*50}")
-            print(f"🌐 Local URL: http://localhost:{self.port}")
-            print(f"📱 Mobile URL: http://{local_ip}:{self.port}")
-            print(f"{'='*50}")
-            print(f"Open the mobile URL on your phone (same WiFi network)")
-            print(f"{'='*50}\n")
-            
+            print(f"\n{'=' * 50}")
+            print("Mobile Remote Server Started!")
+            print(f"{'=' * 50}")
+            print(f"Local URL: http://localhost:{self.port}")
+            print(f"Mobile URL: http://{local_ip}:{self.port}")
+            print(f"{'=' * 50}")
+            print("Open the mobile URL on your phone (same WiFi network)")
+            print(f"{'=' * 50}\n")
             return True
         except Exception as e:
-            print(f"❌ Failed to start mobile remote server: {e}")
+            print(f"Failed to start mobile remote server: {e}")
             return False
-    
+
     def _run_server(self):
-        """Run server in thread"""
         try:
             self.server.serve_forever()
         except Exception as e:
             print(f"Server error: {e}")
-    
+
     def stop(self):
-        """Stop the mobile remote server"""
         if self.server:
             self.server.shutdown()
             self.is_running = False
-            print("📱 Mobile remote server stopped")
-    
+            print("Mobile remote server stopped")
+
     def set_tool_manager(self, tool_manager):
-        """Update the tool manager reference"""
         MobileRemoteHandler.tool_manager = tool_manager
-    
+
     def set_command_callback(self, callback):
-        """Set callback for processing commands (integration with main app)"""
         MobileRemoteHandler.command_callback = callback
 
+    def set_status_callback(self, callback):
+        MobileRemoteHandler.status_callback = callback
 
-# Standalone test
-if __name__ == '__main__':
-    print("Starting Mobile Remote Server in standalone mode...")
+
+if __name__ == "__main__":
     server = MobileRemoteServer(port=8888)
     server.start()
-    
     try:
         while True:
             pass
     except KeyboardInterrupt:
         server.stop()
-        print("\nServer stopped.")
