@@ -41,6 +41,12 @@ def quick_route_tool(text: str):
         return {"type": "tool", "tool": "open_browser", "args": {}}
     if "open youtube" in t:
         return {"type": "tool", "tool": "open_youtube", "args": {}}
+    if "open whatsapp" in t:
+        return {"type": "tool", "tool": "open_whatsapp", "args": {}}
+    if "open instagram" in t:
+        return {"type": "tool", "tool": "open_instagram", "args": {}}
+    if "open facebook" in t:
+        return {"type": "tool", "tool": "open_facebook", "args": {}}
     if "what time" in t or "time now" in t:
         return {"type": "tool", "tool": "get_time", "args": {}}
     if "what date" in t or "today date" in t:
@@ -71,6 +77,9 @@ Available tools:
 - open_browser
 - open_notepad
 - open_calculator
+- open_task_manager
+- open_settings
+- open_control_panel
 - shutdown_computer
 - restart_computer
 - lock_computer
@@ -79,24 +88,56 @@ Available tools:
 - get_date
 - search_google
 - open_youtube
+- open_website
+- open_whatsapp
+- open_instagram
+- open_facebook
 - open_any_app
 - minimize_windows
 - volume_up
 - volume_down
 - mute_volume
+- show_desktop
+- refresh_window
+- refresh_desktop
 - system_status
+- get_system_info
+- list_processes
+- kill_process
+- list_drives
+- run_command
 - type_text
+- type_secret
 - press_key
 - move_mouse
 - mouse_click
+- scroll_page
 - switch_window
 - read_clipboard
+- write_file
+- append_file
+- replace_in_file
+- read_file
+- create_folder
+- delete_file
+- delete_folder
+- move_file
+- copy_file
+- rename_file
+- list_files
+- open_file
+- open_folder
+- find_files
+- download_image
+- download_video
 - switch_panel (args: {"panel": "face|chat|voice|dashboard"})
 - start_camera
 - stop_camera
 - stop_voice_assistant
 
 Return ONLY valid JSON.
+
+Be friendly in normal chat mode. Casual conversation is allowed, and replies should be short, natural, and voice-assistant friendly.
 
 If user asks to change tab/panel/screen in the app, use `switch_panel`.
 If user asks to open/start camera, use `start_camera`.

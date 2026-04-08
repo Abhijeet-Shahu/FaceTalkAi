@@ -11,11 +11,13 @@ import time
 import uuid
 
 class FaceRecognizer:
-    def __init__(self, db_manager, groq_api_key=None):
+    def __init__(self, db_manager, groq_api_key=None, on_unknown_face_callback=None):
         """
         Initialize Face Recognizer with Groq AI integration
+        Optimized for faster processing with frame skipping
         """
         self.db = db_manager
+        self.on_unknown_face_callback = on_unknown_face_callback
         self.known_encodings = []
         self.known_names = []
         self.known_ids = []
@@ -27,6 +29,14 @@ class FaceRecognizer:
         self.last_seen_unknown_encoding = None
         self.demographics_cache = {}
         self.demographics_cache_ttl_sec = 8
+        self.deepface_backends = ["opencv", "skip"]
+
+        # Frame skipping for performance optimization
+        self.frame_skip = 2  # Process every Nth frame (1=all, 2=every other, 3=every third)
+        self.frame_counter = 0
+        self.last_annotated_frame = None
+        self.last_user_info = None
+        self.scale_factor = 0.25  # Default downscale for face detection
 
         try:
             from deepface import DeepFace
@@ -39,10 +49,10 @@ class FaceRecognizer:
             print(f"⚠️ DeepFace not available, age/emotion disabled: {str(e)}")
             if "tf-keras" in str(e).lower() or "tf_keras" in str(e).lower():
                 print("ℹ️ Fix: run `pip install tf-keras` in your active environment.")
-        
+
         # Load known faces from database
         self.load_known_faces()
-        
+
         # Initialize Groq client if API key provided
         if groq_api_key:
             self.groq_client = Groq(api_key=groq_api_key)
@@ -50,11 +60,11 @@ class FaceRecognizer:
         else:
             self.ai_enabled = False
             print("⚠️ Groq AI disabled: No API key provided")
-        
+
         # Face detection settings
         self.detection_model = "hog"  # 'hog' for speed, 'cnn' for accuracy
         self.upsample_times = 1
-        
+
         print(f"✅ FaceRecognizer initialized with {len(self.known_encodings)} known faces")
     
     def load_known_faces(self):
@@ -83,19 +93,33 @@ class FaceRecognizer:
         except Exception as e:
             print(f"❌ Error loading faces: {e}")
     
-    def process_frame(self, frame):
+    def process_frame(self, frame, force_process=False):
         """
         Process a single frame for face recognition
+        Uses frame skipping for better performance
         Returns: (annotated_frame, user_info)
+        
+        Args:
+            frame: Input video frame
+            force_process: If True, skip frame skipping logic
         """
         if frame is None:
             return None, None
         
+        # Frame skipping logic for performance
+        self.frame_counter += 1
+        if not force_process and self.frame_skip > 1:
+            if self.frame_counter % self.frame_skip != 0:
+                # Return cached results with current frame overlay
+                if self.last_annotated_frame is not None:
+                    return frame.copy(), self.last_user_info
+                return frame.copy(), None
+        
         # Create a copy for annotation
         annotated_frame = frame.copy()
         
-        # Resize frame for faster processing (0.25x scale)
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        # Resize frame for faster processing (configurable scale)
+        small_frame = cv2.resize(frame, (0, 0), fx=self.scale_factor, fy=self.scale_factor)
         rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         
         # Find faces
@@ -118,10 +142,11 @@ class FaceRecognizer:
             # Process each face found
             for i, (top, right, bottom, left) in enumerate(face_locations):
                 # Scale coordinates back to original frame size
-                top = int(top * 4)
-                right = int(right * 4)
-                bottom = int(bottom * 4)
-                left = int(left * 4)
+                scale_back = int(1 / self.scale_factor)
+                top = int(top * scale_back)
+                right = int(right * scale_back)
+                bottom = int(bottom * scale_back)
+                left = int(left * scale_back)
                 
                 # Get face encoding for this face
                 face_encoding = face_encodings[i]
@@ -134,8 +159,8 @@ class FaceRecognizer:
 
                 if name != "Unknown":
                     color = (0, 255, 0)  # Green for known
-                    age, emotion = self.estimate_demographics(face_roi, cache_key=str(user_data.get('id')))
-                    
+                    age, emotion, emotion_scores = self.estimate_demographics(face_roi, cache_key=str(user_data.get('id')))
+
                     # Prepare user info for return
                     if user_data:
                         user_info = {
@@ -145,7 +170,8 @@ class FaceRecognizer:
                             'department': user_data.get('department', ''),
                             'confidence': confidence,
                             'age': age if age is not None else '--',
-                            'emotion': emotion if emotion else '--'
+                            'emotion': emotion if emotion else '--',
+                            'emotion_scores': emotion_scores
                         }
                 else:
                     color = (0, 0, 255)  # Red for unknown
@@ -154,7 +180,7 @@ class FaceRecognizer:
                         name = enrolled_user.get("name", "New User")
                         confidence = max(confidence, 0.60)
                         color = (0, 165, 255)
-                        age, emotion = self.estimate_demographics(face_roi, cache_key=str(enrolled_user.get('id')))
+                        age, emotion, emotion_scores = self.estimate_demographics(face_roi, cache_key=str(enrolled_user.get('id')))
                         user_info = {
                             'id': enrolled_user.get('id'),
                             'name': name,
@@ -162,7 +188,8 @@ class FaceRecognizer:
                             'department': enrolled_user.get('department', 'Auto-Enrolled'),
                             'confidence': confidence,
                             'age': age if age is not None else '--',
-                            'emotion': emotion if emotion else '--'
+                            'emotion': emotion if emotion else '--',
+                            'emotion_scores': emotion_scores
                         }
                 
                 # Draw face rectangle
@@ -187,7 +214,19 @@ class FaceRecognizer:
                     self.add_ai_insights(annotated_frame, frame[top:bottom, left:right], 
                                         (left, top), name)
         
+        # Cache results for frame skipping
+        self.last_annotated_frame = annotated_frame
+        self.last_user_info = user_info
+        
         return annotated_frame, user_info
+    
+    def set_frame_skip(self, skip_count):
+        """Set how many frames to skip between processing (1=none, 2=every other, etc.)"""
+        self.frame_skip = max(1, min(10, skip_count))
+    
+    def set_scale_factor(self, factor):
+        """Set the downscale factor for face detection (0.25=quarter size, 0.5=half size)"""
+        self.scale_factor = max(0.1, min(1.0, factor))
     
     def identify_face(self, face_encoding):
         """
@@ -221,33 +260,46 @@ class FaceRecognizer:
 
     def estimate_demographics(self, face_roi, cache_key):
         if face_roi is None or face_roi.size == 0:
-            return None, None
+            return None, None, {}
 
         now_ts = time.time()
         cached = self.demographics_cache.get(cache_key)
         if cached and (now_ts - cached["ts"]) <= self.demographics_cache_ttl_sec:
-            return cached["age"], cached["emotion"]
+            return cached["age"], cached["emotion"], cached.get("emotion_scores", {})
 
         if not self.demographics_enabled:
-            return None, None
+            return None, None, {}
 
-        try:
-            analysis = self.DeepFace.analyze(
-                img_path=face_roi,
-                actions=["age", "emotion"],
-                enforce_detection=False,
-                detector_backend="opencv"
-            )
+        face_input = cv2.cvtColor(face_roi, cv2.COLOR_BGR2RGB)
 
-            if isinstance(analysis, list):
-                analysis = analysis[0] if analysis else {}
+        for backend in self.deepface_backends:
+            try:
+                analysis = self.DeepFace.analyze(
+                    img_path=face_input,
+                    actions=["age", "emotion"],
+                    enforce_detection=False,
+                    detector_backend=backend
+                )
 
-            age = int(round(analysis.get("age"))) if analysis.get("age") is not None else None
-            emotion = analysis.get("dominant_emotion")
-            self.demographics_cache[cache_key] = {"age": age, "emotion": emotion, "ts": now_ts}
-            return age, emotion
-        except Exception:
-            return None, None
+                if isinstance(analysis, list):
+                    analysis = analysis[0] if analysis else {}
+
+                age = int(round(analysis.get("age"))) if analysis.get("age") is not None else None
+                emotion = analysis.get("dominant_emotion")
+                emotion_scores = analysis.get("emotion", {}) or {}
+
+                if age is not None or emotion:
+                    self.demographics_cache[cache_key] = {
+                        "age": age,
+                        "emotion": emotion,
+                        "emotion_scores": emotion_scores,
+                        "ts": now_ts
+                    }
+                    return age, emotion, emotion_scores
+            except Exception:
+                continue
+
+        return None, None, {}
 
     def auto_enroll_unknown(self, face_encoding, face_roi):
         now_ts = time.time()
@@ -263,38 +315,58 @@ class FaceRecognizer:
                 pass
 
         try:
-            profile_image = self.encode_face_image(face_roi)
-            generated_name = f"Visitor-{datetime.now().strftime('%H%M%S')}-{str(uuid.uuid4())[:4]}"
+            # Trigger enrollment callback if available
+            if self.on_unknown_face_callback:
+                profile_image = self.encode_face_image(face_roi)
+                self.on_unknown_face_callback({
+                    'face_encoding': face_encoding,
+                    'face_roi': face_roi,
+                    'profile_image': profile_image,
+                    'timestamp': now_ts
+                })
+                self.last_auto_enroll_ts = now_ts
+                self.last_seen_unknown_encoding = np.array(face_encoding)
+                # Return a temporary user until enrollment is confirmed
+                return {
+                    "id": f"pending_{int(now_ts)}",
+                    "name": "New Person",
+                    "email": "",
+                    "department": "Pending Enrollment"
+                }
+            else:
+                # Fallback to auto-enrollment if no callback
+                profile_image = self.encode_face_image(face_roi)
+                generated_name = f"Visitor-{datetime.now().strftime('%H%M%S')}-{str(uuid.uuid4())[:4]}"
 
-            user_id = self.db.add_user(
-                name=generated_name,
-                face_encoding=face_encoding,
-                email=None,
-                department="Auto-Enrolled",
-                profile_image=profile_image
-            )
+                user_id = self.db.add_user(
+                    name=generated_name,
+                    face_encoding=face_encoding,
+                    email=None,
+                    department="Auto-Enrolled",
+                    profile_image=profile_image
+                )
 
-            if not user_id:
-                return None
+                if not user_id:
+                    return None
 
-            self.known_encodings.append(np.array(face_encoding))
-            self.known_names.append(generated_name)
-            self.known_ids.append(user_id)
-            self.known_face_data.append({
-                'name': generated_name,
-                'email': '',
-                'department': 'Auto-Enrolled'
-            })
+                self.known_encodings.append(np.array(face_encoding))
+                self.known_names.append(generated_name)
+                self.known_ids.append(user_id)
+                self.known_face_data.append({
+                    'name': generated_name,
+                    'email': '',
+                    'department': 'Auto-Enrolled'
+                })
 
-            self.last_auto_enroll_ts = now_ts
-            self.last_seen_unknown_encoding = np.array(face_encoding)
+                self.last_auto_enroll_ts = now_ts
+                self.last_seen_unknown_encoding = np.array(face_encoding)
 
-            return {
-                "id": user_id,
-                "name": generated_name,
-                "email": "",
-                "department": "Auto-Enrolled"
-            }
+                return {
+                    "id": user_id,
+                    "name": generated_name,
+                    "email": "",
+                    "department": "Auto-Enrolled"
+                }
         except Exception as e:
             print(f"Auto-enroll error: {e}")
             return None

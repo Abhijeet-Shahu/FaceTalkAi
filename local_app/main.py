@@ -1,4 +1,4 @@
-# main.py
+﻿# main.py
 import os
 import webbrowser
 import customtkinter as ctk
@@ -20,12 +20,15 @@ from dotenv import load_dotenv
 from datetime import datetime
 import queue
 import time
+import re
 from voice_module import VoiceAssistant
 from tool_manager import ToolManager
 from intent_engine import IntentEngine
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import json
+from mobile_remote_server import MobileRemoteServer
+from config import Config
 
 load_dotenv()
 
@@ -48,13 +51,15 @@ class FaceTalkAI:
         # Initialize modules
         self.face_recognizer = FaceRecognizer(
             self.db,
-            groq_api_key=os.getenv("GROQ_API_KEY")
+            groq_api_key=os.getenv("GROQ_API_KEY"),
+            on_unknown_face_callback=self.handle_unknown_face_enrollment
         )
         self.intent_engine = IntentEngine(api_key=os.getenv("GROQ_API_KEY"))
         
         # Initialize voice assistant
         self.voice = VoiceAssistant(
-            on_speech_callback=self.handle_voice_input
+            on_speech_callback=self.handle_voice_input,
+            voice_type="male"
         )
         
         self.tool_manager = ToolManager(
@@ -63,6 +68,17 @@ class FaceTalkAI:
             stop_camera_callback=self.stop_camera_from_voice,
             stop_voice_callback=self.stop_voice_from_voice
         )
+        
+        # Initialize Mobile Remote Server for controlling from phone
+        self.mobile_server = None
+        if getattr(Config, 'ENABLE_MOBILE_REMOTE', True):
+            self.mobile_server = MobileRemoteServer(
+                host=getattr(Config, 'REMOTE_SERVER_HOST', '0.0.0.0'),
+                port=getattr(Config, 'REMOTE_SERVER_PORT', 8888),
+                tool_manager=self.tool_manager,
+                command_callback=self.handle_mobile_command
+            )
+            self.mobile_server.start()
         
         # Video capture
         self.cap = None
@@ -74,9 +90,14 @@ class FaceTalkAI:
         self.last_greeted_at = {}
         self.greeting_cooldown_sec = 30
         self.absence_reset_sec = 4
+        self.attendance_log_cooldown_sec = 20
         self.last_space_toggle_ts = 0.0
         self.space_toggle_debounce_sec = 0.35
         self.startup_notes = []
+        self.last_attendance_log_at = {}
+        self.enrollment_dialog_open = False
+        self.last_unknown_prompt_ts = 0.0
+        self.unknown_prompt_cooldown_sec = 12
         
         # Setup UI
         self.setup_ui()
@@ -139,10 +160,10 @@ class FaceTalkAI:
         
         # Navigation buttons
         nav_buttons = [
-            ("🔍 Face Recognition", self.show_face_tab, 2),
-            ("💬 AI Chatbot", self.show_chat_tab, 3),
-            ("🎤 Voice Assistant", self.show_voice_tab, 4),
-            ("📊 Dashboard", self.show_dashboard_tab, 5),
+            ("ðŸ” Face Recognition", self.show_face_tab, 2),
+            ("ðŸ’¬ AI Chatbot", self.show_chat_tab, 3),
+            ("ðŸŽ¤ Voice Assistant", self.show_voice_tab, 4),
+            ("ðŸ“Š Dashboard", self.show_dashboard_tab, 5),
         ]
         
         for text, command, row in nav_buttons:
@@ -172,7 +193,7 @@ class FaceTalkAI:
         
         self.sidebar_user_status = ctk.CTkLabel(
             user_frame,
-            text="● Offline",
+            text="â— Offline",
             text_color="gray50",
             font=ctk.CTkFont(size=11)
         )
@@ -203,7 +224,7 @@ class FaceTalkAI:
         # Status label
         self.status_label = ctk.CTkLabel(
             self.status_bar,
-            text="● Ready",
+            text="â— Ready",
             text_color="green",
             font=ctk.CTkFont(size=12)
         )
@@ -215,7 +236,7 @@ class FaceTalkAI:
         
         self.camera_status_label = ctk.CTkLabel(
             self.camera_status_frame,
-            text="📷 Camera: Off",
+            text="ðŸ“· Camera: Off",
             font=ctk.CTkFont(size=12)
         )
         self.camera_status_label.pack(side="left", padx=5)
@@ -296,7 +317,7 @@ class FaceTalkAI:
         
         self.start_btn = ctk.CTkButton(
             control_frame,
-            text="▶ Start Camera",
+            text="â–¶ Start Camera",
             command=self.start_camera,
             fg_color="green",
             hover_color="darkgreen",
@@ -306,7 +327,7 @@ class FaceTalkAI:
         
         self.stop_btn = ctk.CTkButton(
             control_frame,
-            text="⏹ Stop Camera",
+            text="â¹ Stop Camera",
             command=self.stop_camera,
             fg_color="red",
             hover_color="darkred",
@@ -326,7 +347,7 @@ class FaceTalkAI:
         
         ctk.CTkLabel(
             user_card,
-            text="👤 User Information",
+            text="ðŸ‘¤ User Information",
             font=ctk.CTkFont(size=16, weight="bold")
         ).grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
         
@@ -387,7 +408,7 @@ class FaceTalkAI:
         
         ctk.CTkLabel(
             log_card,
-            text="📋 Recent Activity",
+            text="ðŸ“‹ Recent Activity",
             font=ctk.CTkFont(size=16, weight="bold")
         ).grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
         
@@ -491,7 +512,7 @@ class FaceTalkAI:
         # Voice icon
         icon_label = ctk.CTkLabel(
             voice_card,
-            text="🎤",
+            text="ðŸŽ¤",
             font=ctk.CTkFont(size=72)
         )
         icon_label.grid(row=0, column=0, padx=20, pady=(40, 20))
@@ -506,7 +527,7 @@ class FaceTalkAI:
         # Status
         self.voice_status_label = ctk.CTkLabel(
             voice_card,
-            text="Status: Stopped",
+            text="Status: Listening..." if getattr(self.voice, "running", False) else "Status: Stopped",
             font=ctk.CTkFont(size=14),
             text_color=("gray70", "gray70")
         )
@@ -518,7 +539,7 @@ class FaceTalkAI:
         
         self.voice_start_btn = ctk.CTkButton(
             button_frame,
-            text="▶ Start Listening",
+            text="â–¶ Start Listening",
             command=self.start_voice,
             fg_color="green",
             hover_color="darkgreen",
@@ -530,7 +551,7 @@ class FaceTalkAI:
         
         self.voice_stop_btn = ctk.CTkButton(
             button_frame,
-            text="⏹ Stop Listening",
+            text="â¹ Stop Listening",
             command=self.stop_voice,
             fg_color="red",
             hover_color="darkred",
@@ -547,6 +568,10 @@ class FaceTalkAI:
             font=ctk.CTkFont(size=12),
             text_color=("gray50", "gray50")
         ).grid(row=4, column=0, padx=20, pady=(0, 40))
+
+    def update_voice_status_ui(self, status_text):
+        if hasattr(self, "voice_status_label") and self.voice_status_label.winfo_exists():
+            self.voice_status_label.configure(text=status_text)
     
     def setup_dashboard_tab(self):
         """Dashboard tab with modern design and charts"""
@@ -669,7 +694,7 @@ class FaceTalkAI:
         # Refresh button
         ctk.CTkButton(
             activity_frame,
-            text="🔄 Refresh Dashboard",
+            text="ðŸ”„ Refresh Dashboard",
             command=self.refresh_dashboard,
             height=40
         ).grid(row=2, column=0, padx=20, pady=(0, 20), sticky="ew")
@@ -683,17 +708,54 @@ class FaceTalkAI:
         self.time_label.configure(text=current_time)
         self.window.after(1000, self.update_time)
     
+    def handle_mobile_command(self, command):
+        """Handle commands received from mobile remote control"""
+        print(f"ðŸ“± Processing mobile command: {command}")
+        
+        # Process through intent engine like voice commands
+        try:
+            result = self.intent_engine.classify(command)
+            
+            if result and result.get('type') == 'tool':
+                tool_name = result.get('tool')
+                args = result.get('args', {})
+                response = self.tool_manager.execute(tool_name, args)
+                
+                # Show in chat history
+                self.window.after(0, lambda: self.insert_chat_message(f"ðŸ“± Mobile: {command}\n"))
+                self.window.after(0, lambda r=response: self.insert_chat_message(f"ðŸ¤– Response: {r}\n"))
+                
+                return response
+            else:
+                # Regular chat response
+                response = result.get('response', 'Command processed')
+                self.window.after(0, lambda: self.insert_chat_message(f"ðŸ“± Mobile: {command}\n"))
+                self.window.after(0, lambda r=response: self.insert_chat_message(f"ðŸ¤– Response: {r}\n"))
+                return response
+                
+        except Exception as e:
+            error_msg = f"Error processing command: {str(e)}"
+            print(error_msg)
+            return error_msg
+
     def handle_voice_input(self, text):
         """Handle voice input"""
-        if "jarvis" not in text.lower():
+        cleaned = (text or "").strip()
+        if not cleaned:
             return
-        
-        # Show message in chat
-        self.window.after(0, lambda: self.insert_chat_message(f"You (Voice): {text}\n"))
+
+        normalized = re.sub(r"\b(?:hey|ok|okay)?\s*jarvis\b[:,]?\s*", "", cleaned, count=1, flags=re.IGNORECASE).strip()
+        if not normalized:
+            normalized = cleaned
+
+        if len(normalized) < 2:
+            return
+
+        self.window.after(0, lambda m=normalized: self.insert_chat_message(f"You (Voice): {m}\n"))
         
         threading.Thread(
             target=self.get_chat_response,
-            args=(text,),
+            args=(normalized,),
             daemon=True
         ).start()
     
@@ -771,7 +833,7 @@ class FaceTalkAI:
     def start_camera(self):
         """Start video capture"""
         if self.running:
-            self.status_label.configure(text="● Camera is already running")
+            self.status_label.configure(text="â— Camera is already running")
             return
         
         try:
@@ -785,9 +847,9 @@ class FaceTalkAI:
             self.running = True
             self.start_btn.configure(state="disabled")
             self.stop_btn.configure(state="normal")
-            self.camera_status_label.configure(text="📷 Camera: On")
+            self.camera_status_label.configure(text="ðŸ“· Camera: On")
             source = getattr(self.camera, "connected_source", "unknown")
-            self.status_label.configure(text=f"● Camera active ({source})")
+            self.status_label.configure(text=f"â— Camera active ({source})")
             
             self.video_thread = threading.Thread(target=self.process_video, daemon=True)
             self.video_thread.start()
@@ -798,7 +860,7 @@ class FaceTalkAI:
     def stop_camera(self):
         """Stop video capture"""
         if not self.running:
-            self.status_label.configure(text="● Camera is already stopped")
+            self.status_label.configure(text="â— Camera is already stopped")
             return
         
         self.running = False
@@ -810,8 +872,8 @@ class FaceTalkAI:
         
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self.camera_status_label.configure(text="📷 Camera: Off")
-        self.status_label.configure(text="● Camera stopped")
+        self.camera_status_label.configure(text="ðŸ“· Camera: Off")
+        self.status_label.configure(text="â— Camera stopped")
         
         # Clear video display
         self.video_label.configure(text="Camera Feed\n\nClick 'Start Camera' to begin")
@@ -861,23 +923,34 @@ class FaceTalkAI:
             # Update video label
             self.video_label.configure(image=imgtk, text="")
             self.video_label.image = imgtk
-            
-            # Update user info
+
             if user_info:
                 self.current_user = user_info
                 self.update_user_info(user_info)
                 self.maybe_greet_user(user_info, now)
-                
-                # Update sidebar user info
-                self.sidebar_user_name.configure(text=user_info['name'])
+                self.sidebar_user_name.configure(text=user_info["name"])
                 self.sidebar_user_status.configure(text="● Online", text_color="green")
-                
-                # Log attendance
-                self.db.log_attendance(user_info['id'], 'login', user_info['confidence'])
-                self.add_to_log(f"✅ {user_info['name']} recognized")
-                
+                self.log_user_detection(user_info, now)
+            elif (now - self.last_detection_ts) > self.absence_reset_sec:
+                self.active_user_id = None
+                self.sidebar_user_name.configure(text="Not Logged In")
+                self.sidebar_user_status.configure(text="● Offline", text_color="gray50")
+
         except Exception as e:
             print(f"Display error: {e}")
+
+    def log_user_detection(self, user_info, now_ts):
+        user_id = user_info.get("id")
+        if user_id is None or str(user_id).startswith("pending_"):
+            return
+
+        last_logged_ts = self.last_attendance_log_at.get(user_id, 0.0)
+        if (now_ts - last_logged_ts) < self.attendance_log_cooldown_sec:
+            return
+
+        self.db.log_attendance(user_id, "login", user_info.get("confidence"))
+        self.last_attendance_log_at[user_id] = now_ts
+        self.add_to_log(f"Recognized {user_info['name']} ({user_info.get('department', '--')})")
     
     def maybe_greet_user(self, user_info, now_ts):
         """Greet user if conditions met"""
@@ -896,7 +969,7 @@ class FaceTalkAI:
             greeting = f"Welcome {user_name}. Good to see you."
             threading.Thread(target=self.voice.speak, args=(greeting,), daemon=True).start()
             self.add_to_log(f"Greeted {user_name}")
-            self.status_label.configure(text=f"● Greeted {user_name}")
+            self.status_label.configure(text=f"â— Greeted {user_name}")
             self.last_greeted_at[user_key] = now_ts
         
         self.active_user_id = user_key
@@ -909,7 +982,19 @@ class FaceTalkAI:
         self.user_dept_label.configure(text=f"Department: {user_info.get('department', '--')}")
         self.user_confidence_label.configure(text=f"Confidence: {user_info['confidence']:.2%}")
         self.user_age_label.configure(text=f"Approx Age: {user_info.get('age', '--')}")
-        self.user_emotion_label.configure(text=f"Emotion: {user_info.get('emotion', '--')}")
+
+        # Display emotion with confidence score
+        emotion = user_info.get('emotion', '--')
+        emotion_scores = user_info.get('emotion_scores', {})
+
+        if emotion and emotion != '--' and emotion_scores:
+            # Get the confidence of the detected emotion
+            emotion_confidence = emotion_scores.get(emotion, 0)
+            emotion_text = f"Emotion: {emotion.capitalize()} ({emotion_confidence:.0f}%)"
+        else:
+            emotion_text = f"Emotion: {emotion if emotion else '--'}"
+
+        self.user_emotion_label.configure(text=emotion_text)
     
     def add_to_log(self, message):
         """Add message to activity log"""
@@ -1054,26 +1139,26 @@ class FaceTalkAI:
     def start_voice(self):
         """Start voice assistant"""
         if getattr(self.voice, "running", False):
-            self.voice_status_label.configure(text="Status: Listening...")
+            self.update_voice_status_ui("Status: Listening...")
             return
         try:
             self.voice.start()
         except Exception as e:
-            self.voice_status_label.configure(text="Status: Error")
+            self.update_voice_status_ui("Status: Error")
             self.status_label.configure(text=f"Voice start failed: {str(e)}")
             self.display_chat_response(f"Error: Voice start failed: {str(e)}")
             return
-        self.voice_status_label.configure(text="Status: Listening...")
-        self.status_label.configure(text="● Voice Assistant Active")
+        self.update_voice_status_ui("Status: Listening...")
+        self.status_label.configure(text="â— Voice Assistant Active")
     
     def stop_voice(self):
         """Stop voice assistant"""
         if not getattr(self.voice, "running", False):
-            self.voice_status_label.configure(text="Status: Stopped")
+            self.update_voice_status_ui("Status: Stopped")
             return
         self.voice.stop()
-        self.voice_status_label.configure(text="Status: Stopped")
-        self.status_label.configure(text="● Voice Assistant Stopped")
+        self.update_voice_status_ui("Status: Stopped")
+        self.status_label.configure(text="â— Voice Assistant Stopped")
     
     def refresh_dashboard(self):
         """Refresh dashboard statistics"""
@@ -1118,14 +1203,149 @@ class FaceTalkAI:
         """Handle window closing"""
         self.running = False
         time.sleep(0.2)
-        
+
         if hasattr(self, 'camera') and self.camera:
             self.camera.release()
-        
+
         if hasattr(self, 'voice'):
             self.voice.stop()
-        
+
+        # Stop mobile remote server
+        if hasattr(self, 'mobile_server') and self.mobile_server:
+            self.mobile_server.stop()
+
         self.window.destroy()
+
+    def handle_unknown_face_enrollment(self, face_data):
+        """Handle unknown face detection and ask for details once per cooldown."""
+        now_ts = time.time()
+        if self.enrollment_dialog_open:
+            return
+        if (now_ts - self.last_unknown_prompt_ts) < self.unknown_prompt_cooldown_sec:
+            return
+
+        self.enrollment_dialog_open = True
+        self.last_unknown_prompt_ts = now_ts
+
+        def show_enrollment_dialog():
+            dialog = ctk.CTkToplevel(self.window)
+            dialog.title("New Person Detected")
+            dialog.geometry("400x500")
+            dialog.resizable(False, False)
+            dialog.grab_set()
+
+            dialog.transient(self.window)
+            dialog.update_idletasks()
+            x = self.window.winfo_x() + (self.window.winfo_width() // 2) - 200
+            y = self.window.winfo_y() + (self.window.winfo_height() // 2) - 250
+            dialog.geometry(f"+{x}+{y}")
+
+            self.status_label.configure(text="● New person detected. Waiting for details.")
+            self.add_to_log("New person detected. Asking for name and details.")
+            self.window.after(0, lambda: self.voice.speak("I found a new person. Please enter your name and details so I can remember you next time."))
+
+            def close_dialog():
+                self.enrollment_dialog_open = False
+                dialog.destroy()
+
+            dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+
+            ctk.CTkLabel(
+                dialog,
+                text="New Person Detected",
+                font=ctk.CTkFont(size=18, weight="bold")
+            ).pack(padx=20, pady=(20, 10))
+
+            ctk.CTkLabel(
+                dialog,
+                text="Please provide your details so the system can remember you",
+                font=ctk.CTkFont(size=12),
+                text_color="gray70"
+            ).pack(padx=20, pady=(0, 20))
+
+            form_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+            form_frame.pack(padx=20, pady=0, fill="both", expand=True)
+
+            ctk.CTkLabel(form_frame, text="Name:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(10, 0))
+            name_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter your name", height=35)
+            name_entry.pack(fill="x", pady=(5, 15))
+
+            ctk.CTkLabel(form_frame, text="Email:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(10, 0))
+            email_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter your email (optional)", height=35)
+            email_entry.pack(fill="x", pady=(5, 15))
+
+            ctk.CTkLabel(form_frame, text="Department:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", pady=(10, 0))
+            dept_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter your department or details", height=35)
+            dept_entry.pack(fill="x", pady=(5, 15))
+
+            def save_enrollment():
+                name = name_entry.get().strip()
+                email = email_entry.get().strip() or None
+                department = dept_entry.get().strip() or None
+
+                if not name:
+                    messagebox.showwarning("Missing Name", "Please enter your name")
+                    return
+
+                def enroll():
+                    try:
+                        user_id = self.db.add_user(
+                            name=name,
+                            face_encoding=face_data["face_encoding"],
+                            email=email,
+                            department=department or "General",
+                            profile_image=face_data.get("profile_image")
+                        )
+
+                        if user_id:
+                            self.face_recognizer.load_known_faces()
+                            self.insert_chat_message(f"System: Welcome {name}. Your face and details have been saved.\n")
+                            self.window.after(0, lambda: self.voice.speak(f"Welcome {name}. I will remember you from now on."))
+                            self.window.after(0, lambda: self.status_label.configure(text=f"● Saved new person: {name}"))
+                            self.add_to_log(f"Saved new person profile for {name}")
+                        else:
+                            self.insert_chat_message(f"System: Failed to register {name}. Please try again.\n")
+                    except Exception as e:
+                        print(f"Enrollment error: {e}")
+                        self.insert_chat_message(f"System: Error during registration: {str(e)}\n")
+                    finally:
+                        self.enrollment_dialog_open = False
+
+                threading.Thread(target=enroll, daemon=True).start()
+                dialog.destroy()
+
+            def skip_enrollment():
+                self.enrollment_dialog_open = False
+                self.add_to_log("Skipped new person enrollment")
+                dialog.destroy()
+
+            button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+            button_frame.pack(padx=20, pady=(20, 20), fill="x")
+
+            save_btn = ctk.CTkButton(
+                button_frame,
+                text="Save & Remember",
+                command=save_enrollment,
+                fg_color="green",
+                hover_color="darkgreen",
+                height=40
+            )
+            save_btn.pack(side="left", padx=(0, 10), fill="x", expand=True)
+
+            skip_btn = ctk.CTkButton(
+                button_frame,
+                text="Skip",
+                command=skip_enrollment,
+                fg_color="transparent",
+                border_width=1,
+                border_color="gray50",
+                height=40
+            )
+            skip_btn.pack(side="left", fill="x", expand=True)
+
+            name_entry.focus()
+
+        self.window.after(100, show_enrollment_dialog)
     
     def run(self):
         """Run the application"""
@@ -1134,3 +1354,5 @@ class FaceTalkAI:
 if __name__ == "__main__":
     app = FaceTalkAI()
     app.run()
+
+

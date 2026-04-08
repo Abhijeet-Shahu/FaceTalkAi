@@ -38,7 +38,16 @@ class Config:
     CAMERA_PORT = int(os.getenv('CAMERA_PORT', '8080'))
     CAMERA_WIDTH = int(os.getenv('CAMERA_WIDTH', '640'))
     CAMERA_HEIGHT = int(os.getenv('CAMERA_HEIGHT', '480'))
-    CAMERA_FPS = int(os.getenv('CAMERA_FPS', '30'))
+    CAMERA_FPS = int(os.getenv('CAMERA_FPS', '60'))  # Increased default FPS
+    
+    # Performance Settings
+    FRAME_SKIP = int(os.getenv('FRAME_SKIP', '2'))  # Process every Nth frame (1=all, 2=faster)
+    FACE_SCALE_FACTOR = float(os.getenv('FACE_SCALE_FACTOR', '0.25'))  # Downscale for detection
+    
+    # Mobile Remote Control Settings
+    REMOTE_SERVER_HOST = os.getenv('REMOTE_SERVER_HOST', '0.0.0.0')  # Listen on all interfaces
+    REMOTE_SERVER_PORT = int(os.getenv('REMOTE_SERVER_PORT', '8888'))  # Port for mobile commands
+    ENABLE_MOBILE_REMOTE = os.getenv('ENABLE_MOBILE_REMOTE', 'True').lower() == 'true'
     
     # UI Settings
     WINDOW_WIDTH = int(os.getenv('WINDOW_WIDTH', '1280'))
@@ -50,6 +59,16 @@ class Config:
     APP_NAME = "FaceTalk AI"
     APP_VERSION = "1.0.0"
     DEBUG_MODE = os.getenv('DEBUG_MODE', 'False').lower() == 'true'
+
+    # Voice & TTS Settings
+    VOICE_TYPE = os.getenv('VOICE_TYPE', 'male')  # 'male' or 'female'
+    VOICE_RATE = int(os.getenv('VOICE_RATE', '155'))  # Speech rate (male: 155, female: 165)
+    VOICE_VOLUME = float(os.getenv('VOICE_VOLUME', '0.85'))  # Volume level (0.0-1.0)
+    ENABLE_CASUAL_CHAT = os.getenv('ENABLE_CASUAL_CHAT', 'True').lower() == 'true'
+
+    # Emotion Detection Settings
+    EMOTION_DETECTION_ENABLED = os.getenv('EMOTION_DETECTION_ENABLED', 'True').lower() == 'true'
+    EMOTION_CACHE_TTL = int(os.getenv('EMOTION_CACHE_TTL', '15'))  # Cache emotion for N seconds
     
     # Paths
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -99,6 +118,8 @@ class Config:
         print(f"Face Model: {cls.FACE_DETECTION_MODEL}")
         print(f"Tolerance: {cls.FACE_RECOGNITION_TOLERANCE}")
         print(f"UI Theme: {cls.UI_THEME}")
+        print(f"Voice Type: {cls.VOICE_TYPE}")
+        print(f"Casual Chat: {cls.ENABLE_CASUAL_CHAT}")
         print(f"Debug Mode: {cls.DEBUG_MODE}")
         print("="*50 + "\n")
 

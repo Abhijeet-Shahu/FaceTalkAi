@@ -19,14 +19,23 @@ class AudioCapture:
     def start(self):
         self.running = True
 
-        # Get device info
-        device_index = 11  # Realtek WASAPI
-        device_info = sd.query_devices(device_index, 'input')
+        try:
+            default_input = sd.default.device[0]
+        except Exception:
+            default_input = None
+
+        device_index = default_input if default_input is not None and default_input >= 0 else None
+
+        try:
+            device_info = sd.query_devices(device_index, "input")
+        except Exception:
+            device_index = None
+            device_info = sd.query_devices(None, "input")
 
         # Use the device's default sample rate
-        self.sample_rate = int(device_info['default_samplerate'])
+        self.sample_rate = int(device_info["default_samplerate"])
 
-        print(f"Starting audio stream on device {device_index}")
+        print(f"Starting audio stream on device {device_index if device_index is not None else 'default'}")
         print(f"Using sample rate: {self.sample_rate}")
 
         self.stream = sd.InputStream(
@@ -47,6 +56,13 @@ class AudioCapture:
         if self.stream:
             self.stream.stop()
             self.stream.close()
+            self.stream = None
+
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def read(self):
         return self.audio_queue.get()

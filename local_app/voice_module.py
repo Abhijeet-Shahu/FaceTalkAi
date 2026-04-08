@@ -13,12 +13,13 @@ import os
 
 
 class VoiceAssistant:
-    def __init__(self, on_speech_callback=None):
+    def __init__(self, on_speech_callback=None, voice_type="female"):
         """
         on_speech_callback:
             A function that will receive the final transcribed text.
             Example:
                 self.handle_user_message(text)
+        voice_type: "female" or "male"
         """
 
         # Audio + STT
@@ -26,10 +27,11 @@ class VoiceAssistant:
         self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         # TTS (for speaking responses)
-        self.tts = TTSService()
+        self.tts = TTSService(voice_type=voice_type)
 
         # Callback to main app
         self.on_speech_callback = on_speech_callback
+        self.voice_type = voice_type
 
         # Control flags
         self.running = False
@@ -37,8 +39,9 @@ class VoiceAssistant:
         self.is_speaking = False
         self.tts_queue = queue.Queue()
         self.tts_worker_running = True
-        self.tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
-        self.tts_worker.start()
+        self.tts_worker = None
+        self.tts_worker_error_count = 0
+        self._start_tts_worker()
 
     # ---------------------------
     # Start Voice Assistant
@@ -50,6 +53,7 @@ class VoiceAssistant:
 
         print("Starting Voice Assistant...")
         self.running = True
+        self._clear_audio_queue()
 
         self.audio_cap.start()
 
@@ -66,6 +70,28 @@ class VoiceAssistant:
         print("Stopping Voice Assistant...")
         self.running = False
         self.audio_cap.stop()
+        self.is_speaking = False
+        self._clear_audio_queue()
+
+    def _start_tts_worker(self):
+        """Start or restart the TTS worker thread"""
+        if self.tts_worker is not None and self.tts_worker.is_alive():
+            return
+
+        self.tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
+        self.tts_worker.start()
+        print("TTS worker thread started")
+
+    def _clear_audio_queue(self):
+        while not self.audio_cap.audio_queue.empty():
+            try:
+                self.audio_cap.audio_queue.get_nowait()
+            except Exception:
+                break
+
+    def set_voice_type(self, voice_type):
+        self.voice_type = (voice_type or "female").lower()
+        self.tts.set_voice_type(self.voice_type)
 
     # ---------------------------
     # Internal Processing Loop
@@ -177,34 +203,44 @@ class VoiceAssistant:
         """
         if not text:
             return
+
+        if self.tts_worker is None or not self.tts_worker.is_alive():
+            self._start_tts_worker()
+
         self.tts_queue.put(str(text))
 
     def _tts_worker_loop(self):
+        """Worker thread for TTS playback with error recovery"""
         while self.tts_worker_running:
             try:
                 text = self.tts_queue.get(timeout=0.2)
+                self._speak_now(text)
+                self.tts_worker_error_count = 0  # Reset error count on success
             except queue.Empty:
                 continue
-            self._speak_now(text)
+            except Exception as e:
+                print(f"TTS Worker Error: {e}")
+                self.tts_worker_error_count += 1
+                if self.tts_worker_error_count > 5:
+                    print("TTS Worker crashed too many times, restarting...")
+                    self.tts_worker_error_count = 0
+                    # Reinitialize TTS service
+                    try:
+                        self.tts = TTSService(voice_type=self.voice_type)
+                    except Exception as reinit_error:
+                        print(f"Failed to reinitialize TTS: {reinit_error}")
 
     def _speak_now(self, text):
+        """Speak text with proper state management"""
         self.is_speaking = True
         try:
-            # Clear the audio queue to avoid processing our own voice
-            while not self.audio_cap.audio_queue.empty():
-                try:
-                    self.audio_cap.audio_queue.get_nowait()
-                except Exception:
-                    break
+            self._clear_audio_queue()
 
             time.sleep(0.1)
+
             self.tts.speak(text)
 
-            while not self.audio_cap.audio_queue.empty():
-                try:
-                    self.audio_cap.audio_queue.get_nowait()
-                except Exception:
-                    break
+            self._clear_audio_queue()
         except Exception as e:
             print(f"TTS speak error: {e}")
         finally:

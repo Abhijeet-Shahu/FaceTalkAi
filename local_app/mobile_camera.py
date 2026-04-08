@@ -6,24 +6,30 @@ import time
 class MobileCamera:
     """
     Camera connector with source priority support.
+    Optimized for speed with reduced latency frame capture.
 
     camera_type options:
-    - "auto": prefer built-in/local camera, then fallback to Iriun
+    - "auto": prefer Iriun webcam first, then fallback to local camera
     - "local": local camera only
-    - "iriun": prefer Iriun webcam
+    - "iriun": prefer Iriun webcam (RECOMMENDED)
     - "ipwebcam": Android IP Webcam URL
     """
 
-    def __init__(self, camera_type="iriun", ip_address=None, port=8080):
+    def __init__(self, camera_type="iriun", ip_address=None, port=8080, target_fps=60):
         self.camera_type = camera_type
         self.ip_address = ip_address
         self.port = port
+        self.target_fps = target_fps
+        self.frame_delay = 1.0 / target_fps  # Dynamic delay based on target FPS
         self.cap = None
         self.is_running = False
         self.frame = None
         self.lock = threading.Lock()
         self.connected_source = None
         self.thread = None
+        self.frame_count = 0
+        self.last_fps_time = time.time()
+        self.actual_fps = 0
 
     def connect(self):
         try:
@@ -72,12 +78,13 @@ class MobileCamera:
         self.thread.start()
 
     def _connect_auto(self):
-        print("Trying built-in/local camera first...")
-        if self._connect_local(prefer_non_iriun=True):
+        # PRIORITY: Try Iriun first (better quality mobile camera)
+        print("Trying Iriun webcam first (priority)...")
+        if self._connect_iriun():
             return True
 
-        print("Local camera not available. Trying Iriun...")
-        return self._connect_iriun()
+        print("Iriun not available. Trying local camera...")
+        return self._connect_local(prefer_non_iriun=True)
 
     def _connect_local(self, prefer_non_iriun=False):
         device_names = self._list_windows_camera_names()
@@ -142,12 +149,23 @@ class MobileCamera:
         return False
 
     def _update_frame(self):
+        """Optimized frame capture with minimal latency"""
         while self.is_running and self.cap:
             ret, frame = self.cap.read()
             if ret:
                 with self.lock:
                     self.frame = frame
-            time.sleep(0.03)
+                self.frame_count += 1
+                
+                # Calculate actual FPS every second
+                now = time.time()
+                if now - self.last_fps_time >= 1.0:
+                    self.actual_fps = self.frame_count / (now - self.last_fps_time)
+                    self.frame_count = 0
+                    self.last_fps_time = now
+            
+            # Minimal sleep - just yield to other threads (faster than 0.03s)
+            time.sleep(0.005)  # 5ms delay = up to 200 FPS potential
 
     def get_frame(self):
         with self.lock:
@@ -161,3 +179,7 @@ class MobileCamera:
             self.cap.release()
             self.cap = None
         print("Camera released")
+
+    def get_fps(self):
+        """Return current actual FPS"""
+        return self.actual_fps
