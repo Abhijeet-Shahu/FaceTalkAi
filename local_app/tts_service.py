@@ -114,8 +114,8 @@ class TTSService:
         with self._lock:
             phrase = str(text).strip()
             try:
+                self._reset_engine()
                 engine = self._get_engine()
-                engine.stop()
                 engine.say(phrase)
                 engine.runAndWait()
             except Exception as e:
@@ -127,3 +127,15 @@ class TTSService:
                     engine.runAndWait()
                 except Exception as retry_error:
                     print(f"TTS retry error: {retry_error}")
+            finally:
+                self._reset_engine()
+
+    def stop(self):
+        with self._lock:
+            try:
+                if self._engine is not None:
+                    self._engine.stop()
+            except Exception as e:
+                print(f"TTS stop error: {e}")
+            finally:
+                self._reset_engine()

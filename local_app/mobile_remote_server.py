@@ -2,11 +2,12 @@
 Mobile Remote Control Server for FaceTalkAI.
 """
 
+import cgi
 import json
 import socket
 import threading
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 MOBILE_WEB_PAGE = """
@@ -102,7 +103,7 @@ MOBILE_WEB_PAGE = """
             padding: 15px;
             margin-top: 20px;
             min-height: 120px;
-            max-height: 240px;
+            max-height: 260px;
             overflow-y: auto;
         }
         .response-item {
@@ -122,10 +123,13 @@ MOBILE_WEB_PAGE = """
             <div class="status-line" id="ip-display"></div>
             <div class="status-line" id="voice-state">Desktop voice: checking...</div>
             <div class="status-line" id="camera-state">Camera: checking...</div>
+            <div class="status-line" id="mobile-mic-state">Mobile mic: checking...</div>
+            <div class="status-line" id="desktop-audio-state">Desktop audio: checking...</div>
         </div>
 
-        <input type="text" class="command-input" id="commandInput" placeholder="Type a command..." autocomplete="off">
-        <button class="btn btn-primary" onclick="sendCommand()">Send Command</button>
+        <input type="text" class="command-input" id="commandInput" placeholder="Type a command or chat..." autocomplete="off">
+        <input type="file" id="audioFileInput" accept="audio/*" capture style="display:none">
+        <button class="btn btn-primary" onclick="sendCommand()">Send</button>
 
         <div class="button-row">
             <button class="btn btn-voice" id="mobileVoiceStartBtn" onclick="startMobileVoice()">Start Mobile Mic</button>
@@ -133,8 +137,8 @@ MOBILE_WEB_PAGE = """
         </div>
 
         <div class="button-row">
-            <button class="btn btn-primary" onclick="quickCmd('start voice assistant')">Start Desktop Voice</button>
-            <button class="btn btn-primary" onclick="quickCmd('stop voice assistant')">Stop Desktop Voice</button>
+            <button class="btn btn-primary" onclick="controlDesktopVoice('start')">Start Desktop Voice</button>
+            <button class="btn btn-primary" onclick="controlDesktopVoice('stop')">Stop Desktop Voice</button>
         </div>
 
         <div class="panel-buttons">
@@ -164,10 +168,21 @@ MOBILE_WEB_PAGE = """
     </div>
 
     <script>
-        let recognition = null;
+        let mediaRecorder = null;
+        let mediaStream = null;
+        let recordedChunks = [];
         let isListening = false;
 
         document.getElementById('ip-display').textContent = 'Server: ' + window.location.host;
+        document.getElementById('audioFileInput').addEventListener('change', async function(event) {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            await setMobileMicState(true);
+            await uploadMobileAudio(file);
+            await setMobileMicState(false);
+            event.target.value = '';
+            refreshStatus();
+        });
 
         async function sendCommand(cmd) {
             const command = cmd || document.getElementById('commandInput').value.trim();
@@ -183,7 +198,7 @@ MOBILE_WEB_PAGE = """
                     body: JSON.stringify({ command })
                 });
                 const data = await response.json();
-                addResponse('Desktop: ' + (data.response || data.message || 'Done'));
+                addResponse('Jarvis: ' + (data.response || data.message || 'Done'));
                 refreshStatus();
             } catch (err) {
                 addResponse('Error: Could not reach desktop');
@@ -203,56 +218,128 @@ MOBILE_WEB_PAGE = """
             if (box.children.length > 12) box.removeChild(box.lastChild);
         }
 
-        function ensureRecognition() {
-            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                alert('Voice recognition is not supported in this browser. Use Chrome on Android.');
-                return false;
+        async function setMobileMicState(active) {
+            await fetch('/mobile-mic-state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ active })
+            });
+        }
+
+        async function controlDesktopVoice(action) {
+            try {
+                const response = await fetch('/desktop-voice', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action })
+                });
+                const data = await response.json();
+                addResponse('Jarvis: ' + (data.response || 'Done'));
+                refreshStatus();
+            } catch (err) {
+                addResponse('Error: Could not control desktop voice.');
             }
-            if (!recognition) {
-                recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                recognition.continuous = false;
-                recognition.interimResults = false;
-                recognition.lang = 'en-US';
-                recognition.onstart = function() {
-                    isListening = true;
-                    document.getElementById('mobileVoiceStartBtn').classList.add('listening');
-                    document.getElementById('mobileVoiceStartBtn').textContent = 'Listening...';
+        }
+
+        async function startMobileVoice() {
+            if (isListening) return;
+
+            const prefersNativeCapture = !window.isSecureContext;
+            if (prefersNativeCapture) {
+                addResponse('Opening phone voice capture...');
+                document.getElementById('audioFileInput').click();
+                return;
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+                addResponse('Live mobile mic is unavailable here. Opening phone audio capture instead.');
+                document.getElementById('audioFileInput').click();
+                return;
+            }
+
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                recordedChunks = [];
+                mediaRecorder = new MediaRecorder(mediaStream);
+
+                mediaRecorder.ondataavailable = function(event) {
+                    if (event.data && event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
                 };
-                recognition.onresult = function(event) {
-                    const transcript = event.results[0][0].transcript;
-                    document.getElementById('commandInput').value = transcript;
-                    sendCommand(transcript);
-                };
-                recognition.onerror = function(event) {
-                    addResponse('Voice error: ' + event.error);
-                };
-                recognition.onend = function() {
+
+                mediaRecorder.onstop = async function() {
+                    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                    await uploadMobileAudio(blob);
+                    recordedChunks = [];
+                    if (mediaStream) {
+                        mediaStream.getTracks().forEach(track => track.stop());
+                        mediaStream = null;
+                    }
                     isListening = false;
                     document.getElementById('mobileVoiceStartBtn').classList.remove('listening');
                     document.getElementById('mobileVoiceStartBtn').textContent = 'Start Mobile Mic';
+                    await setMobileMicState(false);
+                    refreshStatus();
                 };
-            }
-            return true;
-        }
 
-        function startMobileVoice() {
-            if (!ensureRecognition() || isListening) return;
-            recognition.start();
+                await setMobileMicState(true);
+                mediaRecorder.start();
+                isListening = true;
+                document.getElementById('mobileVoiceStartBtn').classList.add('listening');
+                document.getElementById('mobileVoiceStartBtn').textContent = 'Recording...';
+                addResponse('Mobile mic started. Speak, then tap Stop Mobile Mic.');
+                refreshStatus();
+            } catch (err) {
+                addResponse('Live mobile mic failed. Opening phone audio capture instead.');
+                document.getElementById('audioFileInput').click();
+                try { await setMobileMicState(false); } catch (e) {}
+            }
         }
 
         function stopMobileVoice() {
-            if (recognition && isListening) recognition.stop();
+            if (mediaRecorder && isListening) {
+                mediaRecorder.stop();
+            }
+        }
+
+        async function uploadMobileAudio(blob) {
+            const formData = new FormData();
+            const filename = blob.name || (blob.type && blob.type.includes('mp4') ? 'mobile_voice.mp4' : 'mobile_voice.webm');
+            formData.append('audio', blob, filename);
+            addResponse('Uploading mobile voice...');
+
+            try {
+                const response = await fetch('/mobile-audio', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.transcript) {
+                    addResponse('You (Mobile Voice): ' + data.transcript);
+                }
+                addResponse('Jarvis: ' + (data.response || 'Done'));
+            } catch (err) {
+                addResponse('Error: Mobile audio upload failed.');
+            }
         }
 
         async function refreshStatus() {
             try {
                 const response = await fetch('/status');
                 const data = await response.json();
+                if (data.mobile_url) {
+                    document.getElementById('ip-display').textContent = 'Server: ' + data.mobile_url;
+                }
                 document.getElementById('voice-state').textContent = 'Desktop voice: ' + (data.voice_running ? 'running' : 'stopped');
                 document.getElementById('camera-state').textContent = 'Camera: ' + (data.camera_running ? 'running' : 'stopped');
+                document.getElementById('mobile-mic-state').textContent = 'Mobile mic: ' + (data.mobile_mic_active ? 'active' : 'inactive');
+                document.getElementById('desktop-audio-state').textContent = 'Desktop audio: ' + (data.desktop_audio_device || 'unknown');
             } catch (err) {
                 document.getElementById('voice-state').textContent = 'Desktop voice: unavailable';
                 document.getElementById('camera-state').textContent = 'Camera: unavailable';
+                document.getElementById('mobile-mic-state').textContent = 'Mobile mic: unavailable';
+                document.getElementById('desktop-audio-state').textContent = 'Desktop audio: unavailable';
             }
         }
 
@@ -272,6 +359,8 @@ class MobileRemoteHandler(BaseHTTPRequestHandler):
     tool_manager = None
     command_callback = None
     status_callback = None
+    audio_callback = None
+    mobile_mic_callback = None
 
     def log_message(self, format, *args):
         pass
@@ -313,10 +402,26 @@ class MobileRemoteHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
-        if parsed_path.path != "/command":
-            self.send_error(404, "Not Found")
+
+        if parsed_path.path == "/command":
+            self._handle_command_post()
             return
 
+        if parsed_path.path == "/mobile-mic-state":
+            self._handle_mobile_mic_state_post()
+            return
+
+        if parsed_path.path == "/mobile-audio":
+            self._handle_mobile_audio_post()
+            return
+
+        if parsed_path.path == "/desktop-voice":
+            self._handle_desktop_voice_post()
+            return
+
+        self.send_error(404, "Not Found")
+
+    def _handle_command_post(self):
         content_length = int(self.headers.get("Content-Length", 0))
         post_data = self.rfile.read(content_length)
 
@@ -334,6 +439,80 @@ class MobileRemoteHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._set_headers("application/json", 400)
             self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+        except Exception as e:
+            self._set_headers("application/json", 500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def _handle_mobile_mic_state_post(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(post_data.decode() or "{}")
+            active = bool(data.get("active", False))
+            result = {"mobile_mic_active": active}
+            if MobileRemoteHandler.mobile_mic_callback:
+                callback_result = MobileRemoteHandler.mobile_mic_callback(active)
+                if isinstance(callback_result, dict):
+                    result.update(callback_result)
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps(result).encode())
+        except Exception as e:
+            self._set_headers("application/json", 500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def _handle_mobile_audio_post(self):
+        try:
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                },
+            )
+
+            audio_field = form["audio"] if "audio" in form else None
+            if not audio_field or not getattr(audio_field, "file", None):
+                self._set_headers("application/json", 400)
+                self.wfile.write(json.dumps({"error": "No audio file provided"}).encode())
+                return
+
+            audio_bytes = audio_field.file.read()
+            filename = getattr(audio_field, "filename", "mobile_voice.webm")
+            content_type = getattr(audio_field, "type", "audio/webm")
+
+            if not MobileRemoteHandler.audio_callback:
+                self._set_headers("application/json", 500)
+                self.wfile.write(json.dumps({"error": "Mobile audio handler not configured"}).encode())
+                return
+
+            response = MobileRemoteHandler.audio_callback(audio_bytes, filename, content_type)
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps(response).encode())
+        except Exception as e:
+            self._set_headers("application/json", 500)
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def _handle_desktop_voice_post(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(post_data.decode() or "{}")
+            action = str(data.get("action", "")).strip().lower()
+            if not MobileRemoteHandler.tool_manager:
+                raise RuntimeError("Tool manager not configured")
+
+            if action == "start":
+                response = MobileRemoteHandler.tool_manager.execute("start_voice_assistant", {})
+            elif action == "stop":
+                response = MobileRemoteHandler.tool_manager.execute("stop_voice_assistant", {})
+            else:
+                response = "Invalid desktop voice action."
+
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps({"status": "success", "response": response}).encode())
         except Exception as e:
             self._set_headers("application/json", 500)
             self.wfile.write(json.dumps({"error": str(e)}).encode())
@@ -442,7 +621,16 @@ class MobileRemoteHandler(BaseHTTPRequestHandler):
 
 
 class MobileRemoteServer:
-    def __init__(self, host="0.0.0.0", port=8888, tool_manager=None, command_callback=None, status_callback=None):
+    def __init__(
+        self,
+        host="0.0.0.0",
+        port=8888,
+        tool_manager=None,
+        command_callback=None,
+        status_callback=None,
+        audio_callback=None,
+        mobile_mic_callback=None,
+    ):
         self.host = host
         self.port = port
         self.server = None
@@ -451,16 +639,36 @@ class MobileRemoteServer:
         MobileRemoteHandler.tool_manager = tool_manager
         MobileRemoteHandler.command_callback = command_callback
         MobileRemoteHandler.status_callback = status_callback
+        MobileRemoteHandler.audio_callback = audio_callback
+        MobileRemoteHandler.mobile_mic_callback = mobile_mic_callback
 
     def get_local_ip(self):
+        candidates = []
+
+        try:
+            hostname = socket.gethostname()
+            for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+                ip = info[4][0]
+                if ip and not ip.startswith("127."):
+                    candidates.append(ip)
+        except Exception:
+            pass
+
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.connect(("8.8.8.8", 80))
             ip = sock.getsockname()[0]
             sock.close()
-            return ip
+            if ip and not ip.startswith("127."):
+                candidates.insert(0, ip)
         except Exception:
-            return "127.0.0.1"
+            pass
+
+        for ip in candidates:
+            if ip and not ip.startswith("127."):
+                return ip
+
+        return "127.0.0.1"
 
     def start(self):
         if self.is_running:
@@ -468,17 +676,20 @@ class MobileRemoteServer:
             return False
 
         try:
-            self.server = HTTPServer((self.host, self.port), MobileRemoteHandler)
+            ThreadingHTTPServer.allow_reuse_address = True
+            self.server = ThreadingHTTPServer((self.host, self.port), MobileRemoteHandler)
             self.server_thread = threading.Thread(target=self._run_server, daemon=True)
             self.server_thread.start()
             self.is_running = True
 
             local_ip = self.get_local_ip()
+            bind_host = self.host if self.host != "0.0.0.0" else local_ip
             print(f"\n{'=' * 50}")
             print("Mobile Remote Server Started!")
             print(f"{'=' * 50}")
             print(f"Local URL: http://localhost:{self.port}")
             print(f"Mobile URL: http://{local_ip}:{self.port}")
+            print(f"Bound Host: http://{bind_host}:{self.port}")
             print(f"{'=' * 50}")
             print("Open the mobile URL on your phone (same WiFi network)")
             print(f"{'=' * 50}\n")
@@ -507,6 +718,12 @@ class MobileRemoteServer:
 
     def set_status_callback(self, callback):
         MobileRemoteHandler.status_callback = callback
+
+    def set_audio_callback(self, callback):
+        MobileRemoteHandler.audio_callback = callback
+
+    def set_mobile_mic_callback(self, callback):
+        MobileRemoteHandler.mobile_mic_callback = callback
 
 
 if __name__ == "__main__":

@@ -61,13 +61,17 @@ class FaceTalkAI:
             on_speech_callback=self.handle_voice_input,
             voice_type="male"
         )
+        self.mobile_mic_active = False
+        self.resume_desktop_voice_after_mobile = False
+        self.current_language = "english"
         
         self.tool_manager = ToolManager(
             switch_panel_callback=self.switch_panel,
             start_camera_callback=self.start_camera_from_voice,
             stop_camera_callback=self.stop_camera_from_voice,
             stop_voice_callback=self.stop_voice_from_voice,
-            start_voice_callback=self.start_voice_from_remote
+            start_voice_callback=self.start_voice_from_remote,
+            set_language_callback=self.set_assistant_language
         )
         
         # Initialize Mobile Remote Server for controlling from phone
@@ -78,7 +82,9 @@ class FaceTalkAI:
                 port=getattr(Config, 'REMOTE_SERVER_PORT', 8888),
                 tool_manager=self.tool_manager,
                 command_callback=self.handle_mobile_command,
-                status_callback=self.get_mobile_status
+                status_callback=self.get_mobile_status,
+                audio_callback=self.handle_mobile_audio,
+                mobile_mic_callback=self.handle_mobile_mic_state
             )
             self.mobile_server.start()
         
@@ -100,6 +106,7 @@ class FaceTalkAI:
         self.enrollment_dialog_open = False
         self.last_unknown_prompt_ts = 0.0
         self.unknown_prompt_cooldown_sec = 12
+        self.response_generation = 0
         
         # Setup UI
         self.setup_ui()
@@ -487,12 +494,36 @@ class FaceTalkAI:
         )
         self.clear_btn.grid(row=2, column=0, padx=15, pady=(0, 15), sticky="w")
 
+        self.load_saved_chat_history()
+
         if self.startup_notes:
             self.insert_chat_message("System startup diagnostics:\n")
             for note in self.startup_notes[-8:]:
                 self.insert_chat_message(f"{note}\n")
             self.insert_chat_message("\n")
             self.startup_notes = []
+
+    def load_saved_chat_history(self):
+        """Load saved chat history from Supabase into the chat window."""
+        if not hasattr(self, 'chat_history'):
+            return
+
+        try:
+            user_id = self.current_user['id'] if self.current_user else None
+            history = self.db.get_chat_history(user_id=user_id, limit=100)
+            if not history:
+                return
+
+            self.chat_history.delete("1.0", "end")
+            for item in history:
+                message = (item.get("message") or "").strip()
+                response = (item.get("response") or "").strip()
+                if message:
+                    self.insert_chat_message(f"You: {message}\n\n")
+                if response:
+                    self.insert_chat_message(f"Jarvis: {response}\n\n")
+        except Exception as e:
+            print(f"Chat history load error: {e}")
     
     def setup_voice_tab(self):
         """Voice assistant tab with modern design"""
@@ -585,6 +616,7 @@ class FaceTalkAI:
         # Configure grid
         self.dashboard_frame.grid_columnconfigure((0, 1), weight=1)
         self.dashboard_frame.grid_rowconfigure(1, weight=1)
+        self.dashboard_frame.grid_rowconfigure(2, weight=1)
         
         # Stats cards
         stats_frame = ctk.CTkFrame(self.dashboard_frame, fg_color="transparent")
@@ -700,9 +732,105 @@ class FaceTalkAI:
             command=self.refresh_dashboard,
             height=40
         ).grid(row=2, column=0, padx=20, pady=(0, 20), sticky="ew")
-        
+
+        diagnostics_frame = ctk.CTkFrame(self.dashboard_frame)
+        diagnostics_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=(15, 0), sticky="nsew")
+        diagnostics_frame.grid_columnconfigure(0, weight=1)
+        diagnostics_frame.grid_rowconfigure(1, weight=1)
+
+        header_frame = ctk.CTkFrame(diagnostics_frame, fg_color="transparent")
+        header_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
+        header_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            header_frame,
+            text="Safe Tool Test",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).grid(row=0, column=0, sticky="w")
+
+        ctk.CTkButton(
+            header_frame,
+            text="Run Tool Test",
+            command=self.run_safe_tool_test,
+            height=36,
+            width=150
+        ).grid(row=0, column=1, sticky="e")
+
+        self.tool_test_output = ctk.CTkTextbox(
+            diagnostics_frame,
+            font=ctk.CTkFont(size=12),
+            wrap="word"
+        )
+        self.tool_test_output.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        self.tool_test_output.insert("end", "Run the safe tool test to check audio devices, window targets, and non-destructive tool availability.\n")
+        self.tool_test_output.configure(state="disabled")
+
         # Initial load
         self.refresh_dashboard()
+
+    def run_safe_tool_test(self):
+        """Run a non-destructive tool diagnostic and show the results in the dashboard."""
+        if not hasattr(self, "tool_test_output"):
+            return
+
+        self.tool_test_output.configure(state="normal")
+        self.tool_test_output.delete("1.0", "end")
+        self.tool_test_output.insert("end", "Running safe tool test...\n")
+        self.tool_test_output.configure(state="disabled")
+
+        def worker():
+            try:
+                report = self.tool_manager.diagnostic_report()
+                lines = [
+                    f"Registered tools: {report.get('tool_count', 0)}",
+                    "",
+                    "Audio inputs:",
+                ]
+
+                audio_inputs = report.get("audio_inputs", [])
+                if audio_inputs:
+                    lines.extend([f"- {name}" for name in audio_inputs[:12]])
+                else:
+                    lines.append("- No input devices detected")
+
+                lines.append("")
+                lines.append("Visible windows sample:")
+                window_titles = report.get("windows_titles_sample", [])
+                if window_titles:
+                    lines.extend([f"- {title}" for title in window_titles[:10]])
+                else:
+                    lines.append("- No visible windows detected")
+
+                lines.append("")
+                lines.append("Basic app command checks:")
+                for name, result in report.get("app_checks", {}).items():
+                    status = "OK" if result.get("ok") else "FAIL"
+                    output = str(result.get("output", "") or "").strip()
+                    lines.append(f"- {name}: {status}")
+                    if output:
+                        lines.append(f"  {output}")
+
+                iriun_inputs = [name for name in audio_inputs if "iriun" in name.lower()]
+                lines.append("")
+                if iriun_inputs:
+                    lines.append("Iriun audio detected:")
+                    lines.extend([f"- {name}" for name in iriun_inputs])
+                else:
+                    lines.append("Iriun audio not detected.")
+
+                report_text = "\n".join(lines)
+            except Exception as e:
+                report_text = f"Tool test failed: {str(e)}"
+
+            def update_ui():
+                self.tool_test_output.configure(state="normal")
+                self.tool_test_output.delete("1.0", "end")
+                self.tool_test_output.insert("end", report_text)
+                self.tool_test_output.configure(state="disabled")
+
+            self.window.after(0, update_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
     
     def update_time(self):
         """Update time in status bar"""
@@ -713,37 +841,27 @@ class FaceTalkAI:
     def handle_mobile_command(self, command):
         """Handle commands received from mobile remote control"""
         print(f"Processing mobile command: {command}")
-        
-        # Process through intent engine like voice commands
+        user_id = self.current_user['id'] if self.current_user else None
+
         try:
-            result = self.intent_engine.classify(command)
-            
-            if result and result.get('type') == 'tool':
-                tool_name = result.get('tool')
-                args = result.get('args', {})
-                response = self.tool_manager.execute(tool_name, args)
-                
-                # Show in chat history
-                self.window.after(0, lambda: self.insert_chat_message(f"Mobile: {command}\n"))
-                self.window.after(0, lambda r=response: self.insert_chat_message(f"Response: {r}\n"))
-                
-                return response
-            else:
-                # Regular chat response
-                response = result.get('response', 'Command processed')
-                self.window.after(0, lambda: self.insert_chat_message(f"Mobile: {command}\n"))
-                self.window.after(0, lambda r=response: self.insert_chat_message(f"Response: {r}\n"))
-                return response
-                
+            self.window.after(0, lambda: self.insert_chat_message(f"Mobile: {command}\n"))
+            response = self.process_chat_message(command, source="chat")
+            self.window.after(0, lambda r=response: self.display_chat_response(r))
+            return response
         except Exception as e:
             error_msg = f"Error processing command: {str(e)}"
+            self.db.save_chat_message(user_id, f"[Mobile] {command}", error_msg)
             print(error_msg)
             return error_msg
 
-    def handle_voice_input(self, text):
+    def handle_voice_input(self, text, source="desktop"):
         """Handle voice input"""
         cleaned = (text or "").strip()
         if not cleaned:
+            return
+
+        lowered_cleaned = cleaned.lower()
+        if "jarvis" not in lowered_cleaned and lowered_cleaned not in {"stop", "stop talking", "stop speaking", "stop response"}:
             return
 
         normalized = re.sub(r"\b(?:hey|ok|okay)?\s*jarvis\b[:,]?\s*", "", cleaned, count=1, flags=re.IGNORECASE).strip()
@@ -753,13 +871,89 @@ class FaceTalkAI:
         if len(normalized) < 2:
             return
 
-        self.window.after(0, lambda m=normalized: self.insert_chat_message(f"You (Voice): {m}\n"))
+        lowered = normalized.lower()
+        if lowered in {"stop", "stop talking", "stop speaking", "stop response"}:
+            self.interrupt_current_response()
+            self.window.after(0, lambda: self.insert_chat_message("System: Response interrupted.\n"))
+            return
+
+        speaker_label = "You (Mobile Voice)" if source == "mobile" else "You (Voice)"
+        self.window.after(0, lambda m=normalized, label=speaker_label: self.insert_chat_message(f"{label}: {m}\n"))
         
         threading.Thread(
             target=self.get_chat_response,
-            args=(normalized,),
+            args=(normalized, "voice"),
             daemon=True
         ).start()
+
+    def handle_mobile_mic_state(self, active):
+        active = bool(active)
+        if active == self.mobile_mic_active:
+            return {"mobile_mic_active": self.mobile_mic_active}
+
+        self.mobile_mic_active = active
+        if active:
+            self.resume_desktop_voice_after_mobile = bool(getattr(self.voice, "running", False))
+            if getattr(self.voice, "running", False):
+                self.window.after(0, self.stop_voice)
+            self.window.after(0, lambda: self.update_voice_status_ui("Status: Mobile mic active"))
+            self.window.after(0, lambda: self.status_label.configure(text="● Mobile mic priority active"))
+        else:
+            should_resume = self.resume_desktop_voice_after_mobile
+            self.resume_desktop_voice_after_mobile = False
+            if should_resume:
+                self.window.after(0, self.start_voice)
+            else:
+                self.window.after(0, lambda: self.update_voice_status_ui("Status: Stopped"))
+                self.window.after(0, lambda: self.status_label.configure(text="● Mobile mic released"))
+
+        return {"mobile_mic_active": self.mobile_mic_active}
+
+    def handle_mobile_audio(self, audio_bytes, filename=None, content_type=None):
+        suffix = os.path.splitext(filename or "")[1] or ".webm"
+        try:
+            transcript = self.voice.transcribe_bytes(audio_bytes, suffix=suffix)
+            transcript = (transcript or "").strip()
+            if not transcript:
+                return {"status": "error", "response": "No speech detected from mobile audio."}
+
+            self.window.after(0, lambda t=transcript: self.insert_chat_message(f"You (Mobile Voice): {t}\n"))
+            response_text = self.process_chat_message(transcript, source="voice")
+            self.window.after(0, lambda r=response_text: self.display_chat_response(r))
+            if response_text:
+                self.window.after(0, lambda r=response_text: self.voice.speak(r))
+            return {"status": "success", "transcript": transcript, "response": response_text}
+        except Exception as e:
+            error_message = f"Mobile audio error: {str(e)}"
+            print(error_message)
+            return {"status": "error", "response": error_message}
+
+    def interrupt_current_response(self):
+        self.response_generation += 1
+        try:
+            self.voice.stop_speaking()
+        except Exception as e:
+            print(f"Interrupt error: {e}")
+        self.window.after(0, lambda: self.status_label.configure(text="● Response interrupted"))
+
+    def set_assistant_language(self, language):
+        language_map = {
+            "english": "english",
+            "eng": "english",
+            "en": "english",
+            "hindi": "hindi",
+            "hind": "hindi",
+            "hi": "hindi",
+        }
+        normalized = language_map.get(str(language or "").strip().lower())
+        if not normalized:
+            return "Supported languages are English and Hindi."
+
+        self.current_language = normalized
+        label = normalized.capitalize()
+        self.window.after(0, lambda l=label: self.status_label.configure(text=f"● Language switched to {l}"))
+        self.window.after(0, lambda l=label: self.post_startup_note(f"Assistant language set to {l}."))
+        return f"Language switched to {label}."
     
     def insert_chat_message(self, message, is_user=True):
         """Insert message into chat history"""
@@ -776,10 +970,23 @@ class FaceTalkAI:
             self.insert_chat_message(f"System: {message}\n")
 
     def get_mobile_status(self):
+        mobile_url = None
+        if self.mobile_server and getattr(self.mobile_server, "is_running", False):
+            mobile_url = f"http://{self.mobile_server.get_local_ip()}:{self.mobile_server.port}"
+
+        audio_device = {}
+        try:
+            audio_device = self.voice.audio_cap.get_device_info()
+        except Exception:
+            audio_device = {}
+
         return {
             "voice_running": bool(getattr(self.voice, "running", False)),
             "camera_running": bool(self.running),
-            "current_user": self.current_user.get("name") if self.current_user else None
+            "current_user": self.current_user.get("name") if self.current_user else None,
+            "mobile_url": mobile_url,
+            "mobile_mic_active": self.mobile_mic_active,
+            "desktop_audio_device": audio_device.get("device_name")
         }
 
     def run_startup_checks(self):
@@ -802,6 +1009,23 @@ class FaceTalkAI:
             self.window.after(0, lambda: self.post_startup_note("Age/Emotion model is available."))
         else:
             self.window.after(0, lambda: self.post_startup_note("Age/Emotion disabled (install deepface)."))
+
+        try:
+            diagnostics = self.tool_manager.diagnostic_report()
+            audio_inputs = diagnostics.get("audio_inputs", [])
+            windows_titles = diagnostics.get("windows_titles_sample", [])
+            iriun_audio = [name for name in audio_inputs if "iriun" in name.lower()]
+            if iriun_audio:
+                self.window.after(0, lambda names=", ".join(iriun_audio): self.post_startup_note(f"Iriun audio detected: {names}"))
+            elif audio_inputs:
+                sample_inputs = ", ".join(audio_inputs[:5])
+                self.window.after(0, lambda names=sample_inputs: self.post_startup_note(f"Audio inputs: {names}"))
+
+            if windows_titles:
+                sample_titles = ", ".join(windows_titles[:4])
+                self.window.after(0, lambda titles=sample_titles: self.post_startup_note(f"Visible windows sample: {titles}"))
+        except Exception as e:
+            self.window.after(0, lambda err=str(e): self.post_startup_note(f"Tool diagnostics error: {err}"))
 
         try:
             r = requests.get("http://127.0.0.1:8000/health", timeout=3)
@@ -934,16 +1158,22 @@ class FaceTalkAI:
             self.video_label.image = imgtk
 
             if user_info:
+                previous_user_id = self.current_user.get("id") if self.current_user else None
                 self.current_user = user_info
                 self.update_user_info(user_info)
                 self.maybe_greet_user(user_info, now)
                 self.sidebar_user_name.configure(text=user_info["name"])
                 self.sidebar_user_status.configure(text="● Online", text_color="green")
                 self.log_user_detection(user_info, now)
+                if hasattr(self, 'chat_history') and previous_user_id != user_info.get("id"):
+                    self.load_saved_chat_history()
             elif (now - self.last_detection_ts) > self.absence_reset_sec:
                 self.active_user_id = None
+                self.current_user = None
                 self.sidebar_user_name.configure(text="Not Logged In")
                 self.sidebar_user_status.configure(text="● Offline", text_color="gray50")
+                if hasattr(self, 'chat_history'):
+                    self.load_saved_chat_history()
 
         except Exception as e:
             print(f"Display error: {e}")
@@ -1025,91 +1255,98 @@ class FaceTalkAI:
         
         # Get response in separate thread
         threading.Thread(target=self.get_chat_response, args=(message,), daemon=True).start()
-    
-    def get_chat_response(self, message):
-        """Get chatbot response"""
-        try:
-            user_id = self.current_user['id'] if self.current_user else None
-            recent_memory = self.db.get_recent_chat_memory(user_id=user_id, limit=12)
-            payload = {
-                "text": message,
-                "user_id": user_id,
-                "user_name": self.current_user.get("name") if self.current_user else None,
-                "history": recent_memory
-            }
 
+    def process_chat_message(self, message, source="chat"):
+        """Run the AI/tool pipeline and return the final response text."""
+        user_id = self.current_user['id'] if self.current_user else None
+        lowered_message = str(message or "").strip().lower()
+        if lowered_message in {"jarvis stop", "stop", "stop talking", "stop speaking", "stop response"}:
+            self.interrupt_current_response()
+            result = "Stopping current response."
+            self.db.save_chat_message(user_id, message, result)
+            return result
+
+        try:
+            recent_memory = self.db.get_recent_chat_memory(user_id=user_id, limit=12)
+        except Exception:
+            recent_memory = []
+
+        payload = {
+            "text": message,
+            "user_id": user_id,
+            "user_name": self.current_user.get("name") if self.current_user else None,
+            "history": recent_memory,
+            "language": self.current_language
+        }
+
+        try:
             try:
                 response = requests.post(
                     "http://127.0.0.1:8000/process",
-                    json=payload
-                    
+                    json=payload,
+                    timeout=20
                 )
             except requests.exceptions.Timeout:
-                # Retry once with minimal context to reduce LLM latency.
                 response = requests.post(
                     "http://127.0.0.1:8000/process",
                     json={
                         "text": message,
                         "user_id": user_id,
                         "user_name": self.current_user.get("name") if self.current_user else None,
-                        "history": []
-                    }
+                        "history": [],
+                        "language": self.current_language
+                    },
+                    timeout=20
                 )
 
             if not response.ok:
-                self.window.after(
-                    0,
-                    self.display_chat_response,
-                    f"Error: AI server HTTP {response.status_code}: {response.text[:180]}"
-                )
-                return
+                result = f"Error: AI server HTTP {response.status_code}: {response.text[:180]}"
+                self.db.save_chat_message(user_id, message, result)
+                return result
 
             try:
                 data = response.json()
             except ValueError:
-                self.window.after(
-                    0,
-                    self.display_chat_response,
-                    f"Error: AI server returned invalid JSON: {response.text[:180]}"
-                )
-                return
+                result = f"Error: AI server returned invalid JSON: {response.text[:180]}"
+                self.db.save_chat_message(user_id, message, result)
+                return result
 
             print("Intent Engine Response:", data)
-            
+
             if data.get("type") == "tool":
                 tool_name = data.get("tool")
                 args = data.get("args", {})
-                
                 result = self.tool_manager.execute(tool_name, args)
                 self.db.save_chat_message(user_id, message, result)
-                
-                self.window.after(0, self.display_chat_response, result)
-                if tool_name != "stop_voice_assistant":
-                    self.window.after(0, lambda: self.voice.speak(result))
-                return
-            
-            elif data.get("type") == "chat":
-                result = data.get("response", "No response")
-                self.db.save_chat_message(user_id, message, result)
-                
-                self.window.after(0, self.display_chat_response, result)
-                self.window.after(0, lambda: self.voice.speak(result))
-                return
-        
+                if source == "voice":
+                    self.db.save_voice_command(user_id, message, result, True)
+                return result
+
+            result = data.get("response", "No response")
+            self.db.save_chat_message(user_id, message, result)
+            if source == "voice":
+                self.db.save_voice_command(user_id, message, result, True)
+            return result
+
         except requests.exceptions.ConnectionError:
-            self.window.after(
-                0,
-                self.display_chat_response,
-                "Error: AI server is not running. Start it from ai_server with: uvicorn app:app --reload"
-            )
+            result = "Error: AI server is not running. Start it from ai_server with: uvicorn app:app --reload"
         except requests.exceptions.Timeout:
-            self.window.after(
-                0,
-                self.display_chat_response,
-                "Error: AI server request timed out."
-            )
+            result = "Error: AI server request timed out."
         except Exception as e:
-            self.window.after(0, self.display_chat_response, f"Error: {str(e)}")
+            result = f"Error: {str(e)}"
+
+        self.db.save_chat_message(user_id, message, result)
+        return result
+
+    def get_chat_response(self, message, source="chat"):
+        """Get chatbot response"""
+        generation = self.response_generation
+        result = self.process_chat_message(message, source=source)
+        if generation != self.response_generation:
+            return
+        self.window.after(0, self.display_chat_response, result)
+        if result and "stop_voice_assistant" not in result.lower():
+            self.window.after(0, lambda r=result: self.voice.speak(r))
     
     def display_chat_response(self, response):
         """Display chatbot response"""
@@ -1151,6 +1388,10 @@ class FaceTalkAI:
     
     def start_voice(self):
         """Start voice assistant"""
+        if self.mobile_mic_active:
+            self.update_voice_status_ui("Status: Mobile mic active")
+            self.status_label.configure(text="● Mobile mic has priority over desktop mic")
+            return
         if getattr(self.voice, "running", False):
             self.update_voice_status_ui("Status: Listening...")
             return
@@ -1167,11 +1408,18 @@ class FaceTalkAI:
     def stop_voice(self):
         """Stop voice assistant"""
         if not getattr(self.voice, "running", False):
-            self.update_voice_status_ui("Status: Stopped")
+            if self.mobile_mic_active:
+                self.update_voice_status_ui("Status: Mobile mic active")
+            else:
+                self.update_voice_status_ui("Status: Stopped")
             return
         self.voice.stop()
-        self.update_voice_status_ui("Status: Stopped")
-        self.status_label.configure(text="● Voice Assistant Stopped")
+        if self.mobile_mic_active:
+            self.update_voice_status_ui("Status: Mobile mic active")
+            self.status_label.configure(text="● Desktop mic paused for mobile mic")
+        else:
+            self.update_voice_status_ui("Status: Stopped")
+            self.status_label.configure(text="● Voice Assistant Stopped")
     
     def refresh_dashboard(self):
         """Refresh dashboard statistics"""

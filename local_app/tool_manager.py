@@ -13,6 +13,7 @@ import paperclip
 import psutil
 import pyautogui
 import requests
+import sounddevice as sd
 
 
 class ToolManager:
@@ -22,13 +23,15 @@ class ToolManager:
         start_camera_callback=None,
         stop_camera_callback=None,
         stop_voice_callback=None,
-        start_voice_callback=None
+        start_voice_callback=None,
+        set_language_callback=None
     ):
         self.switch_panel_callback = switch_panel_callback
         self.start_camera_callback = start_camera_callback
         self.stop_camera_callback = stop_camera_callback
         self.stop_voice_callback = stop_voice_callback
         self.start_voice_callback = start_voice_callback
+        self.set_language_callback = set_language_callback
 
         self.tools = {
             "open_browser": self.open_browser,
@@ -100,6 +103,7 @@ class ToolManager:
             "stop_camera": self.stop_camera_tool,
             "start_voice_assistant": self.start_voice_assistant_tool,
             "stop_voice_assistant": self.stop_voice_assistant_tool,
+            "set_language": self.set_language_tool,
             "save_document": self.save_document,
             "save_document_as": self.save_document_as,
             "new_slide": self.new_slide,
@@ -148,6 +152,30 @@ class ToolManager:
         stderr = (result.stderr or "").strip()
         return result.returncode, stdout, stderr
 
+    def _list_windows_titles(self):
+        if platform.system() != "Windows":
+            return []
+
+        user32 = ctypes.windll.user32
+        titles = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def enum_proc(hwnd, lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            title = buffer.value.strip()
+            if title:
+                titles.append(title)
+            return True
+
+        user32.EnumWindows(enum_proc, 0)
+        return titles
+
     def _find_window_handle(self, title_fragment):
         if platform.system() != "Windows" or not title_fragment:
             return None
@@ -181,9 +209,28 @@ class ToolManager:
         hwnd, title = found
         user32 = ctypes.windll.user32
         show_map = {"min": 6, "max": 3, "restore": 9}
-        user32.ShowWindow(hwnd, show_map[mode])
-        user32.SetForegroundWindow(hwnd)
-        action = {"min": "Minimized", "max": "Maximized", "restore": "Activated"}[mode]
+
+        if mode == "min":
+            user32.ShowWindow(hwnd, show_map[mode])
+            action = "Minimized"
+        else:
+            user32.ShowWindow(hwnd, 9)
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            if mode == "max":
+                user32.ShowWindow(hwnd, show_map[mode])
+                action = "Maximized"
+            else:
+                action = "Activated"
+
+        if mode == "min":
+            try:
+                user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
         return f"{action} window: {title}"
 
     def open_any_app(self, args):
@@ -347,8 +394,11 @@ class ToolManager:
         return "Restarting computer in 5 seconds."
 
     def minimize_windows(self, args=None):
-        pyautogui.hotkey("win", "d")
-        return "Minimizing all windows."
+        try:
+            pyautogui.hotkey("win", "d")
+            return "Minimizing all windows."
+        except Exception as e:
+            return f"Failed to minimize all windows: {str(e)}"
 
     def switch_window(self, args=None):
         pyautogui.hotkey("alt", "tab")
@@ -371,6 +421,43 @@ class ToolManager:
         if not title:
             return "Window title is required."
         return self._show_window(title, "max")
+
+    def diagnostic_report(self):
+        """
+        Non-destructive health check for tool availability.
+        """
+        report = {
+            "tool_count": len(self.tools),
+            "registered_tools": sorted(self.tools.keys()),
+            "windows_titles_sample": self._list_windows_titles()[:12],
+            "audio_inputs": [],
+            "app_checks": {},
+        }
+
+        try:
+            for device in sd.query_devices():
+                if int(device.get("max_input_channels", 0) or 0) > 0:
+                    report["audio_inputs"].append(str(device.get("name", "")))
+        except Exception as e:
+            report["audio_inputs_error"] = str(e)
+
+        command_checks = {
+            "notepad": ["where", "notepad"],
+            "calc": ["where", "calc"],
+            "taskmgr": ["where", "taskmgr"],
+            "control": ["where", "control"],
+        }
+        for name, command in command_checks.items():
+            try:
+                returncode, stdout, stderr = self._run_subprocess(command)
+                report["app_checks"][name] = {
+                    "ok": returncode == 0,
+                    "output": stdout or stderr,
+                }
+            except Exception as e:
+                report["app_checks"][name] = {"ok": False, "output": str(e)}
+
+        return report
 
     def show_desktop(self, args=None):
         pyautogui.hotkey("win", "d")
@@ -525,6 +612,19 @@ class ToolManager:
             return "Starting voice assistant."
         except Exception as e:
             return f"Failed to start voice assistant: {str(e)}"
+
+    def set_language_tool(self, args=None):
+        if not self.set_language_callback:
+            return "Language switching is not available."
+
+        language = str((args or {}).get("language", "")).strip().lower()
+        if not language:
+            return "Please specify a language like English or Hindi."
+
+        try:
+            return self.set_language_callback(language)
+        except Exception as e:
+            return f"Failed to switch language: {str(e)}"
 
     def save_document(self, args=None):
         pyautogui.hotkey("ctrl", "s")

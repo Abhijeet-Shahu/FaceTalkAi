@@ -12,12 +12,14 @@ load_dotenv()
 app = FastAPI()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 class Message(BaseModel):
     text: str
     user_id: Optional[str] = None
     user_name: Optional[str] = None
     history: Optional[List[Dict[str, Any]]] = None
+    language: Optional[str] = "english"
 
 
 @app.get("/health")
@@ -53,6 +55,10 @@ def quick_route_tool(text: str):
         return {"type": "tool", "tool": "get_time", "args": {}}
     if "what date" in t or "today date" in t:
         return {"type": "tool", "tool": "get_date", "args": {}}
+    if "switch language to hindi" in t or "change language to hindi" in t:
+        return {"type": "tool", "tool": "set_language", "args": {"language": "hindi"}}
+    if "switch language to english" in t or "change language to english" in t:
+        return {"type": "tool", "tool": "set_language", "args": {"language": "english"}}
 
     panel_map = {
         "face": ["face panel", "face tab", "face recognition"],
@@ -73,7 +79,7 @@ def process_message(message: Message):
         return quick
 
     system_prompt = """
-You are a system controller AI.
+You are FaceTalk AI, an assistant that can both chat naturally and control the local app/tools.
 
 Available tools:
 - open_browser
@@ -151,16 +157,26 @@ Available tools:
 - stop_camera
 - start_voice_assistant
 - stop_voice_assistant
+- set_language (args: {"language": "english|hindi"})
 
 Return ONLY valid JSON.
 
-Be friendly in normal chat mode. Casual conversation is allowed, and replies should be short, natural, and voice-assistant friendly.
+Rules:
+- If the user is asking to control the app, system, tabs, camera, or voice state, return a tool response.
+- If the user is asking for explanation, help, guidance, brainstorming, troubleshooting, or learning, return a chat response.
+- In chat mode, respond like a capable AI agent: clear, helpful, and able to give detailed answers when useful.
+- Default to a basic to mid-level answer: useful, clear, and not too long.
+- Give a detailed answer only if the user asks for detail, deep explanation, full steps, comprehensive information, or advanced guidance.
+- Keep answers natural and readable for chat and voice, but prioritize usefulness over extreme brevity.
+- Never wrap the JSON in markdown.
+- Always reply in the currently selected assistant language.
 
 If user asks to change tab/panel/screen in the app, use `switch_panel`.
 If user asks to open/start camera, use `start_camera`.
 If user asks to close/stop camera, use `stop_camera`.
 If user asks to start voice assistant/listening, use `start_voice_assistant`.
 If user asks to stop/turn off voice assistant/listening, use `stop_voice_assistant`.
+If user asks to switch the assistant language, use `set_language`.
 
 If command is tool:
 {
@@ -186,6 +202,10 @@ If normal chat:
         memory_context = "\n\nRecent memory:\n" + "\n---\n".join(memory_lines)
 
     user_context = f"\nCurrent user: {message.user_name}" if message.user_name else ""
+    selected_language = (message.language or "english").strip().lower()
+    if selected_language not in {"english", "hindi"}:
+        selected_language = "english"
+    language_context = f"\nCurrent assistant language: {selected_language}. Respond in {selected_language}."
 
     if not os.getenv("GROQ_API_KEY"):
         return {
@@ -195,13 +215,13 @@ If normal chat:
 
     def run_groq():
         return client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=DEFAULT_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt + user_context + memory_context},
+                {"role": "system", "content": system_prompt + user_context + language_context + memory_context},
                 {"role": "user", "content": message.text}
             ],
-            temperature=0,
-            max_tokens=220
+            temperature=0.2,
+            max_tokens=700
         )
 
     try:

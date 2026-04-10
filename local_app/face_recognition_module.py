@@ -365,8 +365,10 @@ class FaceRecognizer:
 
         try:
             # Trigger enrollment callback if available
+            profile_image = self.encode_face_image(face_roi)
+            self.db.log_unknown_face(profile_image)
+
             if self.on_unknown_face_callback:
-                profile_image = self.encode_face_image(face_roi)
                 self.on_unknown_face_callback({
                     'face_encoding': face_encoding,
                     'face_roi': face_roi,
@@ -384,7 +386,6 @@ class FaceRecognizer:
                 }
             else:
                 # Fallback to auto-enrollment if no callback
-                profile_image = self.encode_face_image(face_roi)
                 generated_name = f"Visitor-{datetime.now().strftime('%H%M%S')}-{str(uuid.uuid4())[:4]}"
 
                 user_id = self.db.add_user(
