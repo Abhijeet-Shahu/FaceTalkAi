@@ -10,3 +10,11 @@ New Update  chances to get new Laptop and update this project and use hardware f
 
 its good for now 
 But still needs changes
+
+New changes 
+added some new tools to do the work 
+like sending msg to the whatsapp 
+reading msg on the whatsapp 
+searching somehting on youtube 
+all of this without testing 
+this is current readme update 
