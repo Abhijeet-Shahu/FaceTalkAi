@@ -4,6 +4,7 @@ Mobile Remote Control Server for FaceTalkAI.
 
 import cgi
 import json
+import re
 import socket
 import threading
 from datetime import datetime
@@ -562,6 +563,16 @@ class MobileRemoteHandler(BaseHTTPRequestHandler):
 
     def _execute_with_tool_manager(self, command):
         cmd = command.lower()
+
+        youtube_match = re.search(
+            r"(?:search|find|look up)\s+(.*?)\s+(?:on\s+youtube|in\s+youtube)",
+            cmd
+        ) or re.search(r"(?:youtube\s+search|search\s+youtube\s+for)\s+(.+)", cmd)
+        if youtube_match:
+            query = youtube_match.group(1).strip(" ?.")
+            if query:
+                result = MobileRemoteHandler.tool_manager.execute("search_youtube", {"query": query})
+                return {"response": result, "status": "success", "tool": "search_youtube"}
 
         if "minimize " in cmd and "facetalk" in cmd:
             result = MobileRemoteHandler.tool_manager.execute("minimize_window", {"title": "FaceTalk"})

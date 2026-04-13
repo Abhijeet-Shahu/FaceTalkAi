@@ -56,6 +56,7 @@ class ToolManager:
             "get_time": self.get_time,
             "get_date": self.get_date,
             "search_google": self.search_google,
+            "search_youtube": self.search_youtube,
             "minimize_windows": self.minimize_windows,
             "switch_window": self.switch_window,
             "activate_window": self.activate_window,
@@ -302,9 +303,18 @@ class ToolManager:
     def search_google(self, args=None):
         query = (args or {}).get("query")
         if query:
-            webbrowser.open(f"https://www.google.com/search?q={query}")
+            encoded_query = urllib.parse.quote_plus(str(query))
+            webbrowser.open(f"https://www.google.com/search?q={encoded_query}")
             return f"Searching Google for: {query}"
         return "What would you like to search for?"
+
+    def search_youtube(self, args=None):
+        query = (args or {}).get("query")
+        if query:
+            encoded_query = urllib.parse.quote_plus(str(query))
+            webbrowser.open(f"https://www.youtube.com/results?search_query={encoded_query}")
+            return f"Searching YouTube for: {query}"
+        return "What would you like to search on YouTube?"
 
     def open_notepad(self, args=None):
         os.system("notepad")

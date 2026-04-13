@@ -6,6 +6,7 @@ import json
 from dotenv import load_dotenv
 from typing import List, Optional, Dict, Any
 import concurrent.futures as cf
+import re
 
 load_dotenv()
 
@@ -32,6 +33,21 @@ def health():
 
 def quick_route_tool(text: str):
     t = (text or "").lower()
+
+    youtube_match = re.search(
+        r"(?:search|find|look up)\s+(.*?)\s+(?:on\s+youtube|in\s+youtube)",
+        t
+    )
+    if youtube_match:
+        query = youtube_match.group(1).strip(" ?.")
+        if query:
+            return {"type": "tool", "tool": "search_youtube", "args": {"query": query}}
+
+    youtube_prefix_match = re.search(r"(?:youtube\s+search|search\s+youtube\s+for)\s+(.+)", t)
+    if youtube_prefix_match:
+        query = youtube_prefix_match.group(1).strip(" ?.")
+        if query:
+            return {"type": "tool", "tool": "search_youtube", "args": {"query": query}}
 
     if "stop voice" in t or "stop listening" in t or "turn off voice" in t:
         return {"type": "tool", "tool": "stop_voice_assistant", "args": {}}
@@ -95,6 +111,7 @@ Available tools:
 - get_time
 - get_date
 - search_google
+- search_youtube
 - open_youtube
 - open_website
 - open_whatsapp
