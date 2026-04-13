@@ -33,6 +33,32 @@ def health():
 
 def quick_route_tool(text: str):
     t = (text or "").lower()
+    original_text = (text or "").strip()
+
+    whatsapp_message_match = re.search(
+        r"message\s+(.+?)\s+on\s+whatsapp\s+to\s+(.+)",
+        original_text,
+        re.IGNORECASE
+    )
+    if whatsapp_message_match:
+        message_text = whatsapp_message_match.group(1).strip(" .?")
+        contact = whatsapp_message_match.group(2).strip(" .?")
+        if message_text and contact:
+            return {
+                "type": "tool",
+                "tool": "message_whatsapp_contact",
+                "args": {"contact": contact, "message": message_text}
+            }
+
+    whatsapp_open_chat_match = re.search(
+        r"open\s+(.+?)\s+chat\s+in\s+whatsapp",
+        original_text,
+        re.IGNORECASE
+    )
+    if whatsapp_open_chat_match:
+        contact = whatsapp_open_chat_match.group(1).strip(" .?")
+        if contact:
+            return {"type": "tool", "tool": "open_whatsapp_chat", "args": {"contact": contact}}
 
     youtube_match = re.search(
         r"(?:search|find|look up)\s+(.*?)\s+(?:on\s+youtube|in\s+youtube)",
@@ -115,6 +141,8 @@ Available tools:
 - open_youtube
 - open_website
 - open_whatsapp
+- open_whatsapp_chat
+- message_whatsapp_contact
 - open_instagram
 - open_facebook
 - open_any_app

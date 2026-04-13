@@ -563,6 +563,36 @@ class MobileRemoteHandler(BaseHTTPRequestHandler):
 
     def _execute_with_tool_manager(self, command):
         cmd = command.lower()
+        original_command = command.strip()
+
+        whatsapp_message_match = re.search(
+            r"message\s+(.+?)\s+on\s+whatsapp\s+to\s+(.+)",
+            original_command,
+            re.IGNORECASE
+        )
+        if whatsapp_message_match:
+            message_text = whatsapp_message_match.group(1).strip(" .?")
+            contact = whatsapp_message_match.group(2).strip(" .?")
+            if message_text and contact:
+                result = MobileRemoteHandler.tool_manager.execute(
+                    "message_whatsapp_contact",
+                    {"contact": contact, "message": message_text}
+                )
+                return {"response": result, "status": "success", "tool": "message_whatsapp_contact"}
+
+        whatsapp_open_chat_match = re.search(
+            r"open\s+(.+?)\s+chat\s+in\s+whatsapp",
+            original_command,
+            re.IGNORECASE
+        )
+        if whatsapp_open_chat_match:
+            contact = whatsapp_open_chat_match.group(1).strip(" .?")
+            if contact:
+                result = MobileRemoteHandler.tool_manager.execute(
+                    "open_whatsapp_chat",
+                    {"contact": contact}
+                )
+                return {"response": result, "status": "success", "tool": "open_whatsapp_chat"}
 
         youtube_match = re.search(
             r"(?:search|find|look up)\s+(.*?)\s+(?:on\s+youtube|in\s+youtube)",

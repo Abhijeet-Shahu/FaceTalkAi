@@ -4,6 +4,7 @@ import platform
 import shutil
 import subprocess
 import ctypes
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -40,6 +41,8 @@ class ToolManager:
             "open_youtube": self.open_youtube,
             "open_website": self.open_website,
             "open_whatsapp": self.open_whatsapp,
+            "open_whatsapp_chat": self.open_whatsapp_chat,
+            "message_whatsapp_contact": self.message_whatsapp_contact,
             "open_instagram": self.open_instagram,
             "open_facebook": self.open_facebook,
             "open_any_app": self.open_any_app,
@@ -152,6 +155,42 @@ class ToolManager:
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         return result.returncode, stdout, stderr
+
+    def _paste_text(self, text):
+        paperclip.copy(str(text))
+        time.sleep(0.2)
+        pyautogui.hotkey("ctrl", "v")
+
+    def _prepare_whatsapp_web(self):
+        webbrowser.open("https://web.whatsapp.com")
+        time.sleep(6)
+
+        for title_hint in ["WhatsApp", "whatsapp"]:
+            found = self._find_window_handle(title_hint)
+            if found:
+                self._show_window(title_hint, "restore")
+                time.sleep(1)
+                break
+
+    def _open_whatsapp_chat_ui(self, contact_name):
+        if not contact_name:
+            return False
+
+        self._prepare_whatsapp_web()
+
+        # Best-effort automation for WhatsApp Web: when logged in, this opens
+        # the new chat picker, searches for the contact, and opens the first result.
+        pyautogui.press("esc")
+        time.sleep(0.3)
+        pyautogui.hotkey("ctrl", "alt", "n")
+        time.sleep(1.2)
+        self._paste_text(contact_name)
+        time.sleep(1.2)
+        pyautogui.press("down")
+        time.sleep(0.3)
+        pyautogui.press("enter")
+        time.sleep(1)
+        return True
 
     def _list_windows_titles(self):
         if platform.system() != "Windows":
@@ -291,6 +330,37 @@ class ToolManager:
     def open_whatsapp(self, args=None):
         webbrowser.open("https://web.whatsapp.com")
         return "Opening WhatsApp Web"
+
+    def open_whatsapp_chat(self, args=None):
+        contact = (args or {}).get("contact") or (args or {}).get("name")
+        if not contact:
+            return "Please provide the WhatsApp contact name."
+
+        try:
+            self._open_whatsapp_chat_ui(str(contact))
+            return f"Opening WhatsApp chat for: {contact}"
+        except Exception as e:
+            webbrowser.open("https://web.whatsapp.com")
+            return f"Opening WhatsApp Web. Could not open contact chat automatically: {str(e)}"
+
+    def message_whatsapp_contact(self, args=None):
+        contact = (args or {}).get("contact") or (args or {}).get("name")
+        message = (args or {}).get("message") or (args or {}).get("text")
+        if not contact:
+            return "Please provide the WhatsApp contact name."
+        if not message:
+            return "Please provide the WhatsApp message."
+
+        try:
+            self._open_whatsapp_chat_ui(str(contact))
+            time.sleep(0.8)
+            self._paste_text(str(message))
+            time.sleep(0.4)
+            pyautogui.press("enter")
+            return f"Sending WhatsApp message to {contact}: {message}"
+        except Exception as e:
+            webbrowser.open("https://web.whatsapp.com")
+            return f"Opening WhatsApp Web. Could not send the message automatically: {str(e)}"
 
     def open_instagram(self, args=None):
         webbrowser.open("https://www.instagram.com")
