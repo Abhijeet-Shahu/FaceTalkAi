@@ -18,3 +18,5 @@ reading msg on the whatsapp
 searching somehting on youtube 
 all of this without testing 
 this is current readme update 
+
+this is just a current initial update
