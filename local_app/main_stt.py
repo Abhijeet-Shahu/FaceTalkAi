@@ -30,6 +30,9 @@ def main():
     try:
         while True:
             # Process all available audio chunks
+            # currently less reliable 
+            # not guaranteed to process all chunks if they come in faster than the loop, but should be good enough for real-time
+            # still need to check if queue is empty to avoid blocking, but manual check is safer
             while True:
                 try:
                     chunk = capture.read() # Reads from queue, blocking=False inside check? No, Queue is thread safe but check if empty

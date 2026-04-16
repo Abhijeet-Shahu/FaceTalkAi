@@ -2,6 +2,9 @@
 Mobile Remote Control Server for FaceTalkAI.
 """
 
+# needs some changes from wifi to bluetooth or other local communication and may be both by manual connection
+# changes will happen in the future, for now this is a basic local server that can be accessed from mobile browser on the same network, with endpoints for commands, status, and mobile audio upload. It also serves a simple web page with buttons to send commands and control desktop voice assistant.
+
 import cgi
 import json
 import re
