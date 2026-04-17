@@ -155,7 +155,8 @@ class VoiceAssistant:
                     os.remove(temp_path)
             except Exception:
                 pass
-
+    
+    # stop speaking method to clear TTS queue and stop current speech immediately
     def stop_speaking(self):
         self.current_response_cancelled = True
         try:
@@ -169,6 +170,7 @@ class VoiceAssistant:
             print(f"Voice stop_speaking error: {e}")
         self.is_speaking = False
 
+    # speak method
     def speak(self, text):
         if not text:
             return
@@ -179,6 +181,7 @@ class VoiceAssistant:
 
         self.tts_queue.put(str(text))
 
+    # if TTS Stop working 
     def _tts_worker_loop(self):
         while self.tts_worker_running:
             try:
@@ -196,7 +199,7 @@ class VoiceAssistant:
                     try:
                         self.tts = TTSService(voice_type=self.voice_type)
                     except Exception as reinit_error:
-                        print(f"Failed to reinitialize TTS: {reinit_error}")
+                        print(f"TTS reinitialize failed: {reinit_error}")
 
     def _speak_now(self, text):
         self.is_speaking = True
