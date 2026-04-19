@@ -61,9 +61,9 @@ class Config:
     DEBUG_MODE = os.getenv('DEBUG_MODE', 'False').lower() == 'true'
 
     # Voice & TTS Settings
-    VOICE_TYPE = os.getenv('VOICE_TYPE', 'male')  # 'male' or 'female'
-    VOICE_RATE = int(os.getenv('VOICE_RATE', '155'))  # Speech rate (male: 155, female: 165)
-    VOICE_VOLUME = float(os.getenv('VOICE_VOLUME', '0.85'))  # Volume level (0.0-1.0)
+    VOICE_TYPE = os.getenv('VOICE_TYPE', 'female')  # 'male' or 'female'
+    VOICE_RATE = int(os.getenv('VOICE_RATE', '145'))  # Softer default female pace
+    VOICE_VOLUME = float(os.getenv('VOICE_VOLUME', '0.72'))  # Softer voice volume (0.0-1.0)
     ENABLE_CASUAL_CHAT = os.getenv('ENABLE_CASUAL_CHAT', 'True').lower() == 'true'
 
     # Emotion Detection Settings

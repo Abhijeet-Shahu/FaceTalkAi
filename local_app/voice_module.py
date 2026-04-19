@@ -85,8 +85,6 @@ class VoiceAssistant:
         while self.running:
             try:
                 chunk = self.audio_cap.audio_queue.get(timeout=0.1)
-                if self.is_speaking:
-                    continue
             except queue.Empty:
                 continue
 

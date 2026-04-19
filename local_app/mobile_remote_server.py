@@ -202,7 +202,7 @@ MOBILE_WEB_PAGE = """
                     body: JSON.stringify({ command })
                 });
                 const data = await response.json();
-                addResponse('Jarvis: ' + (data.response || data.message || 'Done'));
+                addResponse('Friday: ' + (data.response || data.message || 'Done'));
                 refreshStatus();
             } catch (err) {
                 addResponse('Error: Could not reach desktop');
@@ -238,7 +238,7 @@ MOBILE_WEB_PAGE = """
                     body: JSON.stringify({ action })
                 });
                 const data = await response.json();
-                addResponse('Jarvis: ' + (data.response || 'Done'));
+                addResponse('Friday: ' + (data.response || 'Done'));
                 refreshStatus();
             } catch (err) {
                 addResponse('Error: Could not control desktop voice.');
@@ -322,7 +322,7 @@ MOBILE_WEB_PAGE = """
                 if (data.transcript) {
                     addResponse('You (Mobile Voice): ' + data.transcript);
                 }
-                addResponse('Jarvis: ' + (data.response || 'Done'));
+                addResponse('Friday: ' + (data.response || 'Done'));
             } catch (err) {
                 addResponse('Error: Mobile audio upload failed.');
             }

@@ -146,7 +146,83 @@ class SupabaseManager:
         )
         return result.data if result else None
 
-    def save_chat_message(self, user_id, message, response):
+    def create_chat_session(self, user_id=None, title="New chat"):
+        """
+        Create a chat session row and return its id.
+        Requires a chat_sessions table in Supabase.
+        """
+        try:
+            now = datetime.now().isoformat()
+            session_data = {
+                "user_id": user_id,
+                "title": title or "New chat",
+                "created_at": now,
+                "updated_at": now,
+            }
+            result = self._safe_execute(
+                self.supabase.table("chat_sessions").insert(session_data),
+                "Create chat session",
+            )
+            if result and result.data:
+                return result.data[0].get("id")
+        except Exception as e:
+            print(f"Chat session create error: {e}")
+        return None
+
+    def update_chat_session_title(self, conversation_id, title):
+        """Update the visible title for a chat session."""
+        if not conversation_id or not title:
+            return None
+
+        try:
+            result = self._safe_execute(
+                self.supabase.table("chat_sessions")
+                .update({
+                    "title": str(title)[:80],
+                    "updated_at": datetime.now().isoformat(),
+                })
+                .eq("id", conversation_id),
+                "Update chat session title",
+            )
+            return result.data if result else None
+        except Exception as e:
+            print(f"Chat title update error: {e}")
+            return None
+
+    def touch_chat_session(self, conversation_id):
+        """Move a chat session to the top of the recent list."""
+        if not conversation_id:
+            return None
+
+        try:
+            result = self._safe_execute(
+                self.supabase.table("chat_sessions")
+                .update({"updated_at": datetime.now().isoformat()})
+                .eq("id", conversation_id),
+                "Touch chat session",
+            )
+            return result.data if result else None
+        except Exception as e:
+            print(f"Chat session touch error: {e}")
+            return None
+
+    def get_chat_sessions(self, user_id=None, limit=30):
+        """Fetch only chat-session summaries for the history sidebar."""
+        try:
+            query = self.supabase.table("chat_sessions") \
+                .select("id,title,created_at,updated_at,user_id") \
+                .order("updated_at", desc=True) \
+                .limit(limit)
+
+            query = self._apply_user_scope(query, user_id)
+
+            result = query.execute()
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"Chat sessions fetch error: {e}")
+            return []
+
+    def save_chat_message(self, user_id, message, response, conversation_id=None):
         """
         Save chatbot conversation.
         """
@@ -157,49 +233,70 @@ class SupabaseManager:
                 "response": response,
                 "timestamp": datetime.now().isoformat(),
             }
+            if conversation_id:
+                chat_data["conversation_id"] = conversation_id
+
             result = self._safe_execute(
                 self.supabase.table("chatbot_conversations").insert(chat_data),
                 "Save chat",
             )
+            if result is None and conversation_id:
+                chat_data.pop("conversation_id", None)
+                result = self._safe_execute(
+                    self.supabase.table("chatbot_conversations").insert(chat_data),
+                    "Save chat without conversation id",
+                )
+            if result and conversation_id:
+                self.touch_chat_session(conversation_id)
             return result.data if result else None
         except Exception as e:
             print(f"Chat save error: {e}")
             return None
 
-    def get_recent_chat_memory(self, user_id=None, limit=10):
+    def get_recent_chat_memory(self, user_id=None, limit=10, conversation_id=None):
         """
         Retrieve recent chat memory for personalization.
         """
         try:
+            select_columns = "message,response,timestamp,conversation_id" if conversation_id else "message,response,timestamp"
             query = self.supabase.table("chatbot_conversations") \
-                .select("message,response,timestamp") \
+                .select(select_columns) \
                 .order("timestamp", desc=True) \
                 .limit(limit)
 
             query = self._apply_user_scope(query, user_id)
+            if conversation_id:
+                query = query.eq("conversation_id", conversation_id)
 
             result = query.execute()
             return list(reversed(result.data)) if result.data else []
         except Exception as e:
             print(f"Memory fetch error: {e}")
+            if conversation_id:
+                return self.get_recent_chat_memory(user_id=user_id, limit=limit, conversation_id=None)
             return []
 
-    def get_chat_history(self, user_id=None, limit=100):
+    def get_chat_history(self, user_id=None, limit=100, conversation_id=None):
         """
         Retrieve saved chat history for the active user.
         """
         try:
+            select_columns = "message,response,timestamp,user_id,conversation_id" if conversation_id else "message,response,timestamp,user_id"
             query = self.supabase.table("chatbot_conversations") \
-                .select("message,response,timestamp,user_id") \
+                .select(select_columns) \
                 .order("timestamp", desc=False) \
                 .limit(limit)
 
             query = self._apply_user_scope(query, user_id)
+            if conversation_id:
+                query = query.eq("conversation_id", conversation_id)
 
             result = query.execute()
             return result.data if result.data else []
         except Exception as e:
             print(f"Chat history fetch error: {e}")
+            if conversation_id:
+                return self.get_chat_history(user_id=user_id, limit=limit, conversation_id=None)
             return []
 
     def save_voice_command(self, user_id, command, response, success):

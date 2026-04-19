@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+
 class TTSService:
     def __init__(self, model="tts-1", voice="alloy", voice_type="female"):
         self.model = model
@@ -96,13 +97,13 @@ class TTSService:
         try:
             from config import Config
 
-            default_rate = 145 if self.voice_type == "male" else 165
-            default_volume = 0.78 if self.voice_type == "male" else 0.9
+            default_rate = 145
+            default_volume = 0.72 if self.voice_type == "female" else 0.78
             voice_rate = getattr(Config, "VOICE_RATE", default_rate)
             voice_volume = getattr(Config, "VOICE_VOLUME", default_volume)
         except Exception:
-            voice_rate = 145 if self.voice_type == "male" else 165
-            voice_volume = 0.78 if self.voice_type == "male" else 0.9
+            voice_rate = 145
+            voice_volume = 0.72 if self.voice_type == "female" else 0.78
 
         self._engine.setProperty("rate", voice_rate)
         self._engine.setProperty("volume", voice_volume)
@@ -131,11 +132,9 @@ class TTSService:
                 self._reset_engine()
 
     def stop(self):
-        with self._lock:
-            try:
-                if self._engine is not None:
-                    self._engine.stop()
-            except Exception as e:
-                print(f"TTS stop error: {e}")
-            finally:
-                self._reset_engine()
+        try:
+            engine = self._engine
+            if engine is not None:
+                engine.stop()
+        except Exception as e:
+            print(f"TTS stop error: {e}")

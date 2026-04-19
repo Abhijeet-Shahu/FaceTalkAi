@@ -38,8 +38,9 @@ ctk.set_default_color_theme("blue")
 
 class FaceTalkAI:
     def __init__(self):
+        self.assistant_name = "Friday"
         self.window = ctk.CTk()
-        self.window.title("FaceTalk AI - Intelligent Face Recognition System")
+        self.window.title("FaceTalk AI - Friday Assistant")
         self.window.geometry("1400x800")
         
         # Initialize Supabase
@@ -59,7 +60,7 @@ class FaceTalkAI:
         # Initialize voice assistant
         self.voice = VoiceAssistant(
             on_speech_callback=self.handle_voice_input,
-            voice_type="male"
+            voice_type="female"
         )
         self.mobile_mic_active = False
         self.resume_desktop_voice_after_mobile = False
@@ -107,6 +108,9 @@ class FaceTalkAI:
         self.last_unknown_prompt_ts = 0.0
         self.unknown_prompt_cooldown_sec = 12
         self.response_generation = 0
+        self.current_conversation_id = None
+        self.current_conversation_title = "New chat"
+        self.chat_sessions = []
         
         # Setup UI
         self.setup_ui()
@@ -439,12 +443,37 @@ class FaceTalkAI:
             widget.destroy()
         
         # Configure grid
-        self.chat_frame.grid_columnconfigure(0, weight=1)
+        self.chat_frame.grid_columnconfigure(0, weight=0)
+        self.chat_frame.grid_columnconfigure(1, weight=1)
         self.chat_frame.grid_rowconfigure(0, weight=1)
+
+        history_panel = ctk.CTkFrame(self.chat_frame, width=260)
+        history_panel.grid(row=0, column=0, sticky="nsw", padx=(0, 12), pady=0)
+        history_panel.grid_propagate(False)
+        history_panel.grid_columnconfigure(0, weight=1)
+        history_panel.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            history_panel,
+            text="Chat History",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).grid(row=0, column=0, padx=14, pady=(14, 8), sticky="w")
+
+        self.new_chat_btn = ctk.CTkButton(
+            history_panel,
+            text="+ New Chat",
+            command=self.start_new_chat,
+            height=36
+        )
+        self.new_chat_btn.grid(row=1, column=0, padx=14, pady=(0, 10), sticky="ew")
+
+        self.chat_sessions_frame = ctk.CTkScrollableFrame(history_panel, fg_color="transparent")
+        self.chat_sessions_frame.grid(row=2, column=0, padx=8, pady=(0, 12), sticky="nsew")
+        self.chat_sessions_frame.grid_columnconfigure(0, weight=1)
         
         # Chat container
         chat_container = ctk.CTkFrame(self.chat_frame)
-        chat_container.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        chat_container.grid(row=0, column=1, sticky="nsew", padx=0, pady=0)
         chat_container.grid_columnconfigure(0, weight=1)
         chat_container.grid_rowconfigure(0, weight=1)
         
@@ -494,7 +523,9 @@ class FaceTalkAI:
         )
         self.clear_btn.grid(row=2, column=0, padx=15, pady=(0, 15), sticky="w")
 
-        self.load_saved_chat_history()
+        self.load_chat_sessions()
+        if self.current_conversation_id:
+            self.load_saved_chat_history()
 
         if self.startup_notes:
             self.insert_chat_message("System startup diagnostics:\n")
@@ -503,6 +534,83 @@ class FaceTalkAI:
             self.insert_chat_message("\n")
             self.startup_notes = []
 
+    def start_new_chat(self):
+        """Create a fresh chat session and clear the visible panel."""
+        user_id = self.current_user['id'] if self.current_user else None
+        conversation_id = self.db.create_chat_session(user_id=user_id, title="New chat")
+        self.current_conversation_id = conversation_id
+        self.current_conversation_title = "New chat"
+        if hasattr(self, 'chat_history'):
+            self.chat_history.delete("1.0", "end")
+        self.load_chat_sessions()
+        if conversation_id:
+            self.status_label.configure(text="● New chat ready")
+        else:
+            self.status_label.configure(text="● New local chat ready; add Supabase chat_sessions table for saved sessions")
+
+    def ensure_active_chat_session(self, first_message=None):
+        """Ensure the current message is attached to a database chat session when possible."""
+        if self.current_conversation_id:
+            return self.current_conversation_id
+
+        title = self.make_chat_title(first_message)
+        user_id = self.current_user['id'] if self.current_user else None
+        self.current_conversation_id = self.db.create_chat_session(user_id=user_id, title=title)
+        self.current_conversation_title = title
+        if self.current_conversation_id:
+            self.load_chat_sessions()
+        return self.current_conversation_id
+
+    def make_chat_title(self, text):
+        title = re.sub(r"\s+", " ", str(text or "").strip())
+        if not title:
+            return "New chat"
+        return title[:42] + ("..." if len(title) > 42 else "")
+
+    def load_chat_sessions(self):
+        """Fetch only chat summaries for the sidebar."""
+        if not hasattr(self, "chat_sessions_frame"):
+            return
+
+        for widget in self.chat_sessions_frame.winfo_children():
+            widget.destroy()
+
+        user_id = self.current_user['id'] if self.current_user else None
+        self.chat_sessions = self.db.get_chat_sessions(user_id=user_id, limit=30)
+
+        if not self.chat_sessions:
+            ctk.CTkLabel(
+                self.chat_sessions_frame,
+                text="No saved chats yet",
+                font=ctk.CTkFont(size=12),
+                text_color=("gray50", "gray50")
+            ).grid(row=0, column=0, padx=8, pady=8, sticky="w")
+            return
+
+        for row, session in enumerate(self.chat_sessions):
+            title = session.get("title") or "New chat"
+            is_active = session.get("id") == self.current_conversation_id
+            button = ctk.CTkButton(
+                self.chat_sessions_frame,
+                text=title,
+                command=lambda s=session: self.open_chat_session(s),
+                anchor="w",
+                height=36,
+                fg_color=("#1E88E5", "#1E88E5") if is_active else "transparent",
+                text_color=("white", "white") if is_active else ("gray10", "gray90"),
+                hover_color=("#1565C0", "#263238")
+            )
+            button.grid(row=row, column=0, padx=4, pady=3, sticky="ew")
+
+    def open_chat_session(self, session):
+        """Switch to one saved chat and fetch only that chat's messages."""
+        self.current_conversation_id = session.get("id")
+        self.current_conversation_title = session.get("title") or "New chat"
+        if hasattr(self, 'chat_history'):
+            self.chat_history.delete("1.0", "end")
+        self.load_chat_sessions()
+        self.load_saved_chat_history()
+
     def load_saved_chat_history(self):
         """Load saved chat history from Supabase into the chat window."""
         if not hasattr(self, 'chat_history'):
@@ -510,18 +618,24 @@ class FaceTalkAI:
 
         try:
             user_id = self.current_user['id'] if self.current_user else None
-            history = self.db.get_chat_history(user_id=user_id, limit=100)
+            self.chat_history.delete("1.0", "end")
+            if not self.current_conversation_id:
+                return
+            history = self.db.get_chat_history(
+                user_id=user_id,
+                limit=100,
+                conversation_id=self.current_conversation_id
+            )
             if not history:
                 return
 
-            self.chat_history.delete("1.0", "end")
             for item in history:
                 message = (item.get("message") or "").strip()
                 response = (item.get("response") or "").strip()
                 if message:
                     self.insert_chat_message(f"You: {message}\n\n")
                 if response:
-                    self.insert_chat_message(f"Jarvis: {response}\n\n")
+                    self.insert_chat_message(f"{self.assistant_name}: {response}\n\n")
         except Exception as e:
             print(f"Chat history load error: {e}")
     
@@ -597,7 +711,7 @@ class FaceTalkAI:
         # Command hint
         ctk.CTkLabel(
             voice_card,
-            text="Say 'Jarvis' followed by your command | Press Space to toggle listening",
+            text="Say 'Friday' followed by your command | Press Space to toggle listening",
             font=ctk.CTkFont(size=12),
             text_color=("gray50", "gray50")
         ).grid(row=4, column=0, padx=20, pady=(0, 40))
@@ -861,10 +975,24 @@ class FaceTalkAI:
             return
 
         lowered_cleaned = cleaned.lower()
-        if "jarvis" not in lowered_cleaned and lowered_cleaned not in {"stop", "stop talking", "stop speaking", "stop response"}:
+        stop_audio_phrases = {
+            "stop response friday",
+            "friday stop response",
+            "stop speaking friday",
+            "friday stop speaking",
+            "friday stop",
+        }
+        legacy_stop_phrases = {"stop", "stop talking", "stop speaking", "stop response"}
+        has_wake_word = "friday" in lowered_cleaned or "jarvis" in lowered_cleaned
+        if not has_wake_word and lowered_cleaned not in stop_audio_phrases and lowered_cleaned not in legacy_stop_phrases:
             return
 
-        normalized = re.sub(r"\b(?:hey|ok|okay)?\s*jarvis\b[:,]?\s*", "", cleaned, count=1, flags=re.IGNORECASE).strip()
+        if lowered_cleaned in stop_audio_phrases or lowered_cleaned in legacy_stop_phrases:
+            self.stop_response_audio()
+            self.window.after(0, lambda: self.insert_chat_message("System: Friday stopped speaking.\n"))
+            return
+
+        normalized = re.sub(r"\b(?:hey|ok|okay)?\s*(?:friday|jarvis)\b[:,]?\s*", "", cleaned, count=1, flags=re.IGNORECASE).strip()
         if not normalized:
             normalized = cleaned
 
@@ -872,9 +1000,9 @@ class FaceTalkAI:
             return
 
         lowered = normalized.lower()
-        if lowered in {"stop", "stop talking", "stop speaking", "stop response"}:
-            self.interrupt_current_response()
-            self.window.after(0, lambda: self.insert_chat_message("System: Response interrupted.\n"))
+        if lowered in stop_audio_phrases or lowered in legacy_stop_phrases:
+            self.stop_response_audio()
+            self.window.after(0, lambda: self.insert_chat_message("System: Friday stopped speaking.\n"))
             return
 
         speaker_label = "You (Mobile Voice)" if source == "mobile" else "You (Voice)"
@@ -920,7 +1048,7 @@ class FaceTalkAI:
             self.window.after(0, lambda t=transcript: self.insert_chat_message(f"You (Mobile Voice): {t}\n"))
             response_text = self.process_chat_message(transcript, source="voice")
             self.window.after(0, lambda r=response_text: self.display_chat_response(r))
-            if response_text:
+            if response_text and not self.is_stop_audio_command(transcript):
                 self.window.after(0, lambda r=response_text: self.voice.speak(r))
             return {"status": "success", "transcript": transcript, "response": response_text}
         except Exception as e:
@@ -930,11 +1058,16 @@ class FaceTalkAI:
 
     def interrupt_current_response(self):
         self.response_generation += 1
+        self.stop_response_audio()
+        self.window.after(0, lambda: self.status_label.configure(text="● Response interrupted"))
+
+    def stop_response_audio(self):
+        """Stop only Friday's audio output; keep chat generation and text display alive."""
         try:
             self.voice.stop_speaking()
         except Exception as e:
             print(f"Interrupt error: {e}")
-        self.window.after(0, lambda: self.status_label.configure(text="● Response interrupted"))
+        self.window.after(0, lambda: self.status_label.configure(text="● Friday stopped speaking"))
 
     def set_assistant_language(self, language):
         language_map = {
@@ -1166,6 +1299,9 @@ class FaceTalkAI:
                 self.sidebar_user_status.configure(text="● Online", text_color="green")
                 self.log_user_detection(user_info, now)
                 if hasattr(self, 'chat_history') and previous_user_id != user_info.get("id"):
+                    self.current_conversation_id = None
+                    self.current_conversation_title = "New chat"
+                    self.load_chat_sessions()
                     self.load_saved_chat_history()
             elif (now - self.last_detection_ts) > self.absence_reset_sec:
                 self.active_user_id = None
@@ -1173,6 +1309,9 @@ class FaceTalkAI:
                 self.sidebar_user_name.configure(text="Not Logged In")
                 self.sidebar_user_status.configure(text="● Offline", text_color="gray50")
                 if hasattr(self, 'chat_history'):
+                    self.current_conversation_id = None
+                    self.current_conversation_title = "New chat"
+                    self.load_chat_sessions()
                     self.load_saved_chat_history()
 
         except Exception as e:
@@ -1246,6 +1385,11 @@ class FaceTalkAI:
         message = self.chat_input.get().strip()
         if not message:
             return
+        self.ensure_active_chat_session(message)
+        if self.current_conversation_id and self.current_conversation_title == "New chat":
+            self.current_conversation_title = self.make_chat_title(message)
+            self.db.update_chat_session_title(self.current_conversation_id, self.current_conversation_title)
+            self.load_chat_sessions()
         
         # Display user message
         self.insert_chat_message(f"You: {message}\n\n")
@@ -1256,18 +1400,41 @@ class FaceTalkAI:
         # Get response in separate thread
         threading.Thread(target=self.get_chat_response, args=(message,), daemon=True).start()
 
+    def is_stop_audio_command(self, message):
+        lowered = str(message or "").strip().lower()
+        return lowered in {
+            "stop response friday",
+            "friday stop response",
+            "stop speaking friday",
+            "friday stop speaking",
+            "friday stop",
+            "stop response",
+            "stop speaking",
+            "stop talking",
+            "stop",
+        }
+
     def process_chat_message(self, message, source="chat"):
         """Run the AI/tool pipeline and return the final response text."""
         user_id = self.current_user['id'] if self.current_user else None
         lowered_message = str(message or "").strip().lower()
-        if lowered_message in {"jarvis stop", "stop", "stop talking", "stop speaking", "stop response"}:
-            self.interrupt_current_response()
-            result = "Stopping current response."
-            self.db.save_chat_message(user_id, message, result)
+        conversation_id = self.ensure_active_chat_session(message)
+        if conversation_id and self.current_conversation_title == "New chat" and not self.is_stop_audio_command(message):
+            self.current_conversation_title = self.make_chat_title(message)
+            self.db.update_chat_session_title(conversation_id, self.current_conversation_title)
+            self.window.after(0, self.load_chat_sessions)
+        if self.is_stop_audio_command(lowered_message) or lowered_message in {"jarvis stop", "friday stop"}:
+            self.stop_response_audio()
+            result = "Friday stopped speaking. The written response will stay in chat."
+            self.db.save_chat_message(user_id, message, result, conversation_id=conversation_id)
             return result
 
         try:
-            recent_memory = self.db.get_recent_chat_memory(user_id=user_id, limit=12)
+            recent_memory = self.db.get_recent_chat_memory(
+                user_id=user_id,
+                limit=12,
+                conversation_id=conversation_id
+            )
         except Exception:
             recent_memory = []
 
@@ -1301,14 +1468,14 @@ class FaceTalkAI:
 
             if not response.ok:
                 result = f"Error: AI server HTTP {response.status_code}: {response.text[:180]}"
-                self.db.save_chat_message(user_id, message, result)
+                self.db.save_chat_message(user_id, message, result, conversation_id=conversation_id)
                 return result
 
             try:
                 data = response.json()
             except ValueError:
                 result = f"Error: AI server returned invalid JSON: {response.text[:180]}"
-                self.db.save_chat_message(user_id, message, result)
+                self.db.save_chat_message(user_id, message, result, conversation_id=conversation_id)
                 return result
 
             print("Intent Engine Response:", data)
@@ -1317,13 +1484,13 @@ class FaceTalkAI:
                 tool_name = data.get("tool")
                 args = data.get("args", {})
                 result = self.tool_manager.execute(tool_name, args)
-                self.db.save_chat_message(user_id, message, result)
+                self.db.save_chat_message(user_id, message, result, conversation_id=conversation_id)
                 if source == "voice":
                     self.db.save_voice_command(user_id, message, result, True)
                 return result
 
             result = data.get("response", "No response")
-            self.db.save_chat_message(user_id, message, result)
+            self.db.save_chat_message(user_id, message, result, conversation_id=conversation_id)
             if source == "voice":
                 self.db.save_voice_command(user_id, message, result, True)
             return result
@@ -1335,7 +1502,7 @@ class FaceTalkAI:
         except Exception as e:
             result = f"Error: {str(e)}"
 
-        self.db.save_chat_message(user_id, message, result)
+        self.db.save_chat_message(user_id, message, result, conversation_id=conversation_id)
         return result
 
     def get_chat_response(self, message, source="chat"):
@@ -1345,12 +1512,12 @@ class FaceTalkAI:
         if generation != self.response_generation:
             return
         self.window.after(0, self.display_chat_response, result)
-        if result and "stop_voice_assistant" not in result.lower():
+        if result and "stop_voice_assistant" not in result.lower() and not self.is_stop_audio_command(message):
             self.window.after(0, lambda r=result: self.voice.speak(r))
     
     def display_chat_response(self, response):
         """Display chatbot response"""
-        self.insert_chat_message(f"Jarvis: {response}\n\n")
+        self.insert_chat_message(f"{self.assistant_name}: {response}\n\n")
     
     def clear_chat(self):
         """Clear chat history"""

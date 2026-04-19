@@ -121,7 +121,7 @@ def process_message(message: Message):
         return quick
 
     system_prompt = """
-You are FaceTalk AI, an assistant that can both chat naturally and control the local app/tools.
+You are Friday, the FaceTalk AI assistant that can both chat naturally and control the local app/tools.
 
 Available tools:
 - open_browser
