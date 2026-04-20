@@ -8,7 +8,9 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
+import zipfile
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 import paperclip
 import psutil
@@ -88,6 +90,7 @@ class ToolManager:
             "append_file": self.append_file,
             "replace_in_file": self.replace_in_file,
             "read_file": self.read_file,
+            "create_file": self.create_file,
             "create_folder": self.create_folder,
             "delete_file": self.delete_file,
             "delete_folder": self.delete_folder,
@@ -133,6 +136,47 @@ class ToolManager:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
+
+    def _write_docx(self, file_path, content):
+        paragraphs = str(content).replace("\r\n", "\n").split("\n")
+        body_parts = []
+        for paragraph in paragraphs:
+            if paragraph.strip():
+                body_parts.append(
+                    "<w:p><w:r><w:t xml:space=\"preserve\">"
+                    + escape(paragraph)
+                    + "</w:t></w:r></w:p>"
+                )
+            else:
+                body_parts.append("<w:p/>")
+
+        document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    %s
+    <w:sectPr>
+      <w:pgSz w:w="12240" w:h="15840"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+    </w:sectPr>
+  </w:body>
+</w:document>""" % "\n    ".join(body_parts)
+
+        content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"""
+
+        rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"""
+
+        with zipfile.ZipFile(file_path, "w", compression=zipfile.ZIP_DEFLATED) as docx:
+            docx.writestr("[Content_Types].xml", content_types_xml)
+            docx.writestr("_rels/.rels", rels_xml)
+            docx.writestr("word/document.xml", document_xml)
 
     def _downloads_dir(self):
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -808,6 +852,41 @@ class ToolManager:
             return f"File not found: {file_path}"
         except Exception as e:
             return f"Failed to read file: {str(e)}"
+
+    def create_file(self, args=None):
+        args = args or {}
+        folder_path = args.get("folder_path") or args.get("folder") or args.get("directory")
+        filename = args.get("filename") or args.get("name")
+        file_path = args.get("path") or args.get("file_path")
+        content = args.get("content")
+
+        if content is None:
+            content = args.get("text")
+        if content is None:
+            content = ""
+
+        if file_path:
+            target_path = self._normalize_path(file_path)
+        elif folder_path and filename:
+            target_path = self._normalize_path(os.path.join(str(folder_path), str(filename)))
+        elif filename:
+            target_path = self._normalize_path(filename)
+        else:
+            return "File path or filename is required."
+
+        try:
+            self._ensure_parent_dir(target_path)
+            extension = os.path.splitext(target_path)[1].lower()
+
+            if extension == ".docx":
+                self._write_docx(target_path, content)
+            else:
+                with open(target_path, "w", encoding="utf-8") as file:
+                    file.write(str(content))
+
+            return f"Successfully created file: {target_path}"
+        except Exception as e:
+            return f"Failed to create file: {str(e)}"
 
     def create_folder(self, args=None):
         folder_path = self._normalize_path((args or {}).get("path") or (args or {}).get("folder_path") or (args or {}).get("directory"))

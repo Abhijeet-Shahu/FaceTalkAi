@@ -181,6 +181,7 @@ Available tools:
 - scroll_page
 - switch_window
 - read_clipboard
+- create_file
 - write_file
 - append_file
 - replace_in_file
@@ -215,6 +216,11 @@ Rules:
 - Keep answers natural and readable for chat and voice, but prioritize usefulness over extreme brevity.
 - Never wrap the JSON in markdown.
 - Always reply in the currently selected assistant language.
+- If the user asks to create a file and also asks you to write/generate content for it, use `create_file`.
+- For `create_file`, include args like {"path": "folder/name.docx", "content": "full generated content"} or {"folder_path": "folder", "filename": "name.docx", "content": "full generated content"}.
+- If the user asks for a Word/docs file, use the `.docx` extension.
+- If the user asks for a folder and a file inside it, use `create_file`; the app will create the parent folder automatically.
+- Generate the requested file content yourself before returning the tool JSON. Respect requested topics, tone, and word counts as closely as possible.
 
 If user asks to change tab/panel/screen in the app, use `switch_panel`.
 If user asks to open/start camera, use `start_camera`.
@@ -266,7 +272,7 @@ If normal chat:
                 {"role": "user", "content": message.text}
             ],
             temperature=0.2,
-            max_tokens=700
+            max_tokens=2400
         )
 
     try:
